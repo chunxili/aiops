@@ -208,7 +208,7 @@ type ToolResult = {
 
 ## 后续交付与变更执行
 
-当前版本只做只读查询和分析。后续如果要让 Agent 支持“交付”，不建议直接把现有只读工具改成可写工具，而是增加独立的 Delivery Actions / Change Workflows 层。
+当前版本已经实现了 Delivery Actions / Change Workflows 的基础代码。只读工具继续负责查询和分析；变更交付通过独立的 `/api/delivery/changes` 系列接口完成，默认是 mock 执行，不会改真实基础设施。
 
 推荐分层：
 
@@ -247,11 +247,12 @@ flowchart TB
 - 可回滚：交付计划要包含验证方式和回滚策略。
 - 可解释：Agent 必须展示执行前依据，包括用到的只读工具结果。
 
-后续推荐的交付接口可以长这样：
+已实现的交付接口：
 
 ```text
 POST /api/agent/chat              # 继续作为用户聊天入口
 POST /api/delivery/changes        # 创建变更计划
+GET  /api/delivery/changes/:id
 POST /api/delivery/changes/:id/approve
 POST /api/delivery/changes/:id/execute
 GET  /api/delivery/changes/:id/audit
@@ -268,6 +269,29 @@ flowchart LR
 ```
 
 也就是说，Agent 可以推动交付，但不能绕过审批直接改生产环境。
+
+创建变更计划示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/delivery/changes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":"扩容 platform-prod API",
+    "summary":"基于告警、EKS pending pods 和日志错误生成的扩容建议",
+    "environment":"prod",
+    "requestedBy":"alice",
+    "actions":[
+      {
+        "type":"scale_service",
+        "target":"platform-prod/api",
+        "parameters":{"replicas":6}
+      }
+    ],
+    "evidence":["query_alerts","query_cluster_status","query_logs"],
+    "idempotencyKey":"change-platform-prod-api-001",
+    "rollbackPlan":"如果错误率未下降，恢复原副本数并升级给服务 owner"
+  }'
+```
 
 ## 只读安全边界
 

@@ -1,6 +1,7 @@
 import express from "express";
 import { getModelClient } from "../agent/modelAdapter.js";
 import { AgentOrchestrator } from "../agent/orchestrator.js";
+import { mapDeliveryError, registerDeliveryRoutes } from "../delivery/routes.js";
 import { getAwsProvider } from "../integrations/aws/provider.js";
 import { chatRequestSchema } from "../schemas/agent.js";
 import { isReadOnlyViolation, ToolRegistry, UnknownToolError } from "../tools/registry.js";
@@ -38,7 +39,12 @@ export function createApp() {
     }
   });
 
+  registerDeliveryRoutes(app);
+
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (mapDeliveryError(error, res)) {
+      return;
+    }
     if (isReadOnlyViolation(error)) {
       res.status(403).json({ detail: error.message });
       return;
