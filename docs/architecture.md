@@ -1,16 +1,76 @@
 # Architecture
 
+## Compatibility Target
+
+This agent is implemented in TypeScript so it can fit into an existing AIOps platform built with Backstage, TypeScript, and React.
+
+The compatibility boundary is intentionally narrow:
+
+```text
+Backstage React plugin -> POST /api/agent/chat -> AIOps Agent service
+```
+
+Backstage should not call individual tools directly in normal user flows. It should send user messages to `/api/agent/chat` and render the response.
+
 ## Platform AIOps Agent
 
-The Platform AIOps Agent is a read-only support assistant for AWS platform operations. The frontend talks to one backend route, `/api/agent/chat`, and does not call AWS or individual tools directly.
+The Platform AIOps Agent is a read-only support assistant for AWS platform operations.
 
 Request flow:
 
 ```text
-Frontend -> FastAPI /api/agent/chat -> AgentOrchestrator -> ClaudeSdkAgentRuntime -> MiniMax adapter -> ToolRegistry -> read-only tools -> simulated AWS provider
+Backstage React UI
+  -> Express /api/agent/chat
+  -> AgentOrchestrator
+  -> ClaudeSdkAgentRuntime
+  -> ToolRegistry
+  -> read-only tools
+  -> simulated AWS provider
+  -> MiniMax adapter for final analysis
 ```
 
 The current system uses `MockModelClient` when no MiniMax key is configured and `MockAwsProvider` for simulated AWS account data.
+
+## Backstage Integration
+
+Recommended Backstage shape:
+
+- A Backstage frontend plugin owns the chat UI.
+- The plugin posts messages to `/api/agent/chat`.
+- The plugin renders `answer` as the assistant reply.
+- The plugin renders `tool_calls` as evidence, tables, or expandable JSON.
+- The plugin can map known tool categories to existing AIOps widgets.
+
+Stable response contract:
+
+```ts
+type ChatResponse = {
+  answer: string;
+  tool_calls: Array<{
+    name: string;
+    result: {
+      tool: string;
+      category: "Alert" | "FinOps" | "EKS" | "Resource" | "Log" | "AIOps";
+      readonly: true;
+      summary: string;
+      data: Record<string, unknown>;
+    };
+  }>;
+};
+```
+
+## Extending Existing AIOps Features
+
+To integrate an existing TypeScript AIOps feature:
+
+1. Wrap the feature as a function returning `ToolResult`.
+2. Keep the function read-only.
+3. Register it in `src/tools/registry.ts`.
+4. Add intent keywords in `selectForMessage`.
+5. Add route/tool tests.
+6. Let the Backstage UI continue calling only `/api/agent/chat`.
+
+This allows old AIOps capabilities to become agent capabilities without changing the chat contract.
 
 ## Simulated AWS Accounts
 
@@ -63,25 +123,18 @@ Guardrails:
 
 ## Claude SDK Runtime And MiniMax Boundary
 
-`agent/claude_sdk_runtime.py` owns the Claude-SDK-shaped agent loop: select tools, execute read-only tools through the registry, pass structured context to the model backend, and return a trace of tool calls.
+`src/agent/claudeSdkRuntime.ts` owns the Claude-SDK-shaped agent loop: select tools, execute read-only tools through the registry, pass structured context to the model backend, and return a trace of tool calls.
 
-`agent/model_adapter.py` owns the MiniMax integration point. If `MINIMAX_API_KEY` is configured, the runtime calls MiniMax's OpenAI-compatible Chat Completions API through this adapter. Otherwise it uses deterministic local mock output.
+`src/agent/modelAdapter.ts` owns the MiniMax integration point. If `MINIMAX_API_KEY` is configured, the runtime calls MiniMax's OpenAI-compatible Chat Completions API through this adapter. Otherwise it uses deterministic local mock output.
 
 The model receives server-selected read-only tool context. Tool execution remains server-side through `ToolRegistry`, so MiniMax cannot bypass the read-only guard.
 
 ## Future GitHub Push Flow
 
-This repository is initialized locally only. To publish later:
-
-```bash
-git remote add origin <repo-url>
-git branch -M main
-git push -u origin main
-```
-
 Before pushing, run:
 
 ```bash
-pytest
+npm run build
+npm test
 git status --short
 ```
