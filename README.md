@@ -540,8 +540,30 @@ POST /api/delivery/changes        # 创建变更计划
 GET  /api/delivery/changes/:id
 POST /api/delivery/changes/:id/approve
 POST /api/delivery/changes/:id/execute
+POST /api/delivery/changes/:id/verify
+POST /api/delivery/changes/:id/escalate
 GET  /api/delivery/changes/:id/audit
 ```
+
+当前交付闭环状态：
+
+```mermaid
+flowchart LR
+  Planned["planned"] --> Approved["approved"]
+  Approved --> Executed["executed"]
+  Executed --> Verify["post-change verification"]
+  Verify -->|通过| Succeeded["succeeded"]
+  Verify -->|失败| Rollback["rollback_required"]
+  Rollback --> Escalated["escalated"]
+```
+
+闭环行为：
+
+- `execute` 只表示变更动作已执行，不直接代表业务恢复。
+- `verify` 会执行变更后复查，当前为 mock verifier，后续可替换成真实告警、日志、集群、SLO 检查。
+- 复查通过后状态进入 `succeeded`。
+- 复查失败后状态进入 `rollback_required`，表示需要回滚或人工判断。
+- `escalate` 用于把失败闭环升级给 SRE、服务 owner 或工单系统。
 
 核心原则：
 

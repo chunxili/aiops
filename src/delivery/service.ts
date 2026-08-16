@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { assertCanApprove, assertCanExecute } from "./guards.js";
+import { assertCanApprove, assertCanExecute, DeliveryGuardError } from "./guards.js";
 import { DeliveryExecutor } from "./executor.js";
 import { deliveryStore, type DeliveryStore } from "./store.js";
+import { DeliveryVerifier } from "./verifier.js";
 import type { ChangePlan } from "./types.js";
 
 export const createChangeRequestSchema = z.object({
@@ -39,10 +40,21 @@ export const executeChangeRequestSchema = z.object({
   idempotencyKey: z.string().min(1),
 });
 
+export const verifyChangeRequestSchema = z.object({
+  actor: z.string().min(1),
+});
+
+export const escalateChangeRequestSchema = z.object({
+  actor: z.string().min(1),
+  escalatedTo: z.string().min(1),
+  reason: z.string().min(1),
+});
+
 export class DeliveryService {
   constructor(
     private readonly store: DeliveryStore = deliveryStore,
     private readonly executor: DeliveryExecutor = new DeliveryExecutor(),
+    private readonly verifier: DeliveryVerifier = new DeliveryVerifier(),
   ) {}
 
   create(input: z.infer<typeof createChangeRequestSchema>): ChangePlan {
@@ -99,6 +111,53 @@ export class DeliveryService {
       actor,
       timestamp: executedAt,
       details: executionResult,
+    });
+  }
+
+  async verify(changeId: string, actor: string): Promise<ChangePlan> {
+    const change = this.store.get(changeId);
+    if (change.status !== "executed") {
+      throw new DeliveryGuardError("Change must be executed before post-change verification.");
+    }
+
+    const verificationResult = await this.verifier.verify(change);
+    const verifiedAt = new Date().toISOString();
+    const verified = {
+      ...change,
+      status: verificationResult.status === "passed" ? ("succeeded" as const) : ("rollback_required" as const),
+      verifiedAt,
+      verificationResult,
+    };
+
+    return this.store.update(verified, {
+      changeId,
+      event: verificationResult.status === "passed" ? "verified" : "rollback_required",
+      actor,
+      timestamp: verifiedAt,
+      details: verificationResult,
+    });
+  }
+
+  escalate(changeId: string, actor: string, escalatedTo: string, reason: string): ChangePlan {
+    const change = this.store.get(changeId);
+    if (!["executed", "rollback_required"].includes(change.status)) {
+      throw new DeliveryGuardError("Only executed or rollback-required changes can be escalated.");
+    }
+
+    const escalatedAt = new Date().toISOString();
+    const escalated = {
+      ...change,
+      status: "escalated" as const,
+      escalatedAt,
+      escalatedTo,
+    };
+
+    return this.store.update(escalated, {
+      changeId,
+      event: "escalated",
+      actor,
+      timestamp: escalatedAt,
+      details: { escalatedTo, reason },
     });
   }
 

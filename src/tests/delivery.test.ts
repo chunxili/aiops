@@ -115,6 +115,91 @@ describe("delivery workflow", () => {
     ]);
   });
 
+  it("verifies an executed change and closes the self-healing loop", async () => {
+    const change = await createChange({ idempotencyKey: "verify-success-001" });
+
+    await request(`/api/delivery/changes/${change.id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approvedBy: "bob" }),
+    });
+    await request(`/api/delivery/changes/${change.id}/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor: "release-bot", idempotencyKey: "verify-success-001" }),
+    });
+
+    const verifyResponse = await request(`/api/delivery/changes/${change.id}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor: "release-bot" }),
+    });
+
+    expect(verifyResponse.status).toBe(200);
+    const verified = await verifyResponse.json();
+    expect(verified.status).toBe("succeeded");
+    expect(verified.verificationResult.nextAction).toBe("close_change");
+
+    const auditResponse = await request(`/api/delivery/changes/${change.id}/audit`);
+    const audit = await auditResponse.json();
+    expect(audit.events.map((event: { event: string }) => event.event)).toEqual([
+      "created",
+      "approved",
+      "executed",
+      "verified",
+    ]);
+  });
+
+  it("marks failed verification as rollback required and allows escalation", async () => {
+    const change = await createChange({
+      idempotencyKey: "verify-failure-001",
+      actions: [
+        {
+          type: "scale_service",
+          target: "platform-prod/api",
+          parameters: { replicas: 6, forceVerificationFailure: true },
+        },
+      ],
+    });
+
+    await request(`/api/delivery/changes/${change.id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approvedBy: "bob" }),
+    });
+    await request(`/api/delivery/changes/${change.id}/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor: "release-bot", idempotencyKey: "verify-failure-001" }),
+    });
+
+    const verifyResponse = await request(`/api/delivery/changes/${change.id}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor: "release-bot" }),
+    });
+
+    expect(verifyResponse.status).toBe(200);
+    const verified = await verifyResponse.json();
+    expect(verified.status).toBe("rollback_required");
+    expect(verified.verificationResult.nextAction).toBe("rollback");
+
+    const escalateResponse = await request(`/api/delivery/changes/${change.id}/escalate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actor: "release-bot",
+        escalatedTo: "sre-oncall",
+        reason: "Post-change verification failed after self-healing action.",
+      }),
+    });
+
+    expect(escalateResponse.status).toBe(200);
+    const escalated = await escalateResponse.json();
+    expect(escalated.status).toBe("escalated");
+    expect(escalated.escalatedTo).toBe("sre-oncall");
+  });
+
   it("blocks execution with a mismatched idempotency key", async () => {
     const change = await createChange({ idempotencyKey: "expected-key" });
 

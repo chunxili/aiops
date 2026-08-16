@@ -4,7 +4,9 @@ import {
   approveChangeRequestSchema,
   createChangeRequestSchema,
   DeliveryService,
+  escalateChangeRequestSchema,
   executeChangeRequestSchema,
+  verifyChangeRequestSchema,
 } from "./service.js";
 import { DeliveryGuardError } from "./guards.js";
 import { ChangeNotFoundError } from "./store.js";
@@ -42,6 +44,24 @@ export function registerDeliveryRoutes(app: express.Express): void {
     try {
       const input = executeChangeRequestSchema.parse(req.body);
       res.json(await service.execute(req.params.changeId, input.actor, input.idempotencyKey));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/delivery/changes/:changeId/verify", async (req, res, next) => {
+    try {
+      const input = verifyChangeRequestSchema.parse(req.body);
+      res.json(await service.verify(req.params.changeId, input.actor));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/delivery/changes/:changeId/escalate", (req, res, next) => {
+    try {
+      const input = escalateChangeRequestSchema.parse(req.body);
+      res.json(service.escalate(req.params.changeId, input.actor, input.escalatedTo, input.reason));
     } catch (error) {
       next(error);
     }
