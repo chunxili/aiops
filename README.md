@@ -471,10 +471,30 @@ Backstage 插件建议渲染：
 flowchart LR
   Feature["已有或新增 AIOps 功能"] --> Wrapper["封装成只读 Tool 函数"]
   Wrapper --> Shape["返回 ToolResult"]
-  Shape --> Registry["注册到 src/tools/registry.ts"]
-  Registry --> Intent["添加意图关键词或模型工具选择"]
-  Intent --> Tests["补测试"]
+  Shape --> Definition["新增 ToolDefinition"]
+  Definition --> Catalog["src/tools/definitions.ts"]
+  Catalog --> Registry["ToolRegistry 自动注册"]
+  Registry --> Tests["补测试和评测样例"]
   Tests --> Agent["Agent 自动具备新能力"]
+```
+
+当前已经实现自动注册：`ToolRegistry` 会从 `src/tools/definitions.ts` 读取工具定义，自动生成工具列表、模型可见 manifest、关键词兜底选择和执行 handler。也就是说，新增 demo 能力时不需要在 registry、manifest、关键词表三处重复维护。
+
+新增工具只需要提供一个 `ToolDefinition`：
+
+```ts
+type ToolDefinition = {
+  manifest: {
+    name: string;
+    category: "Alert" | "FinOps" | "EKS" | "Resource" | "Log" | "AIOps" | "ServiceCatalog";
+    description: string;
+    readOnly: true;
+    examples: string[];
+    phases: string[];
+  };
+  keywords: string[];
+  handler: (provider: AwsProvider) => Promise<ToolResult>;
+};
 ```
 
 工具返回结构保持统一：
