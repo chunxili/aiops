@@ -5,6 +5,7 @@ import { MockAwsProvider } from "../integrations/aws/provider.js";
 import type { ChatRequest, ToolPlanStep } from "../schemas/agent.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ModelClient } from "../agent/modelAdapter.js";
+import { BackstageServiceCatalogProvider, ServiceCatalog } from "../catalog/serviceCatalog.js";
 
 process.env.MODEL_PROVIDER = "mock";
 
@@ -259,6 +260,63 @@ describe("LangGraph model-driven planning", () => {
       },
     ]);
     expect(result.toolCalls.map((call) => call.name)).toEqual(["query_logs", "query_cluster_status"]);
+  });
+});
+
+describe("service catalog providers", () => {
+  it("resolves services from the mock provider", async () => {
+    const catalog = new ServiceCatalog();
+    const resolution = await catalog.resolve("收款服务 5xx 异常");
+
+    expect(resolution?.service.name).toBe("payment-api");
+    expect(resolution?.matchedBy).toBe("alias");
+  });
+
+  it("maps Backstage catalog components into service metadata", async () => {
+    const originalFetch = globalThis.fetch;
+    process.env.BACKSTAGE_CATALOG_URL = "https://backstage.internal/api/catalog";
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify([
+          {
+            metadata: {
+              name: "risk-api",
+              title: "风控服务",
+              description: "Risk control service",
+              tags: ["risk", "fraud"],
+              annotations: {
+                "aiops/environment": "prod",
+                "aiops/cluster": "platform-prod",
+                "aiops/namespace": "risk",
+                "aiops/log-group": "/aws/eks/platform-prod/risk-api",
+                "aiops/dashboard-url": "https://grafana.local/d/risk-api",
+                "aiops/permissions": "AIOps,EKS,Log,Alert,Delivery",
+                "aiops/prod-approvers": "risk-owner,sre-approver",
+                "aiops/runbooks": "risk-5xx-runbook",
+              },
+            },
+            spec: {
+              owner: "risk-team",
+              system: "risk",
+              dependsOn: ["component:default/payment-api"],
+            },
+          },
+        ]),
+        { status: 200 },
+      );
+
+    try {
+      const catalog = new ServiceCatalog(new BackstageServiceCatalogProvider());
+      const resolution = await catalog.resolve("风控服务 5xx 异常");
+
+      expect(resolution?.service.name).toBe("risk-api");
+      expect(resolution?.service.owner).toBe("risk-team");
+      expect(resolution?.service.environments[0].cluster).toBe("platform-prod");
+      expect(resolution?.service.dependencies[0].service).toBe("payment-api");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.BACKSTAGE_CATALOG_URL;
+    }
   });
 });
 

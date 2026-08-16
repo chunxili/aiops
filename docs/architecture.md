@@ -12,6 +12,20 @@ Backstage React plugin -> POST /api/agent/chat -> AIOps Agent service
 
 Backstage should not call individual tools directly in normal user flows. It should send user messages to `/api/agent/chat` and render the response.
 
+## Service Catalog / CMDB Boundary
+
+The agent treats service ownership, runtime location, logs, dashboards, approval policy, and dependencies as a catalog provider boundary instead of planner hard-code.
+
+Provider options:
+
+- `mock`: local demo data for payment, order, and platform services.
+- `backstage`: reads Backstage Catalog component entities and maps `metadata`, `spec`, and `aiops/*` annotations into the agent's service metadata.
+- `cmdb`: reads a company CMDB HTTP endpoint that returns `ServiceMetadata[]` or `{ services: ServiceMetadata[] }`.
+
+The internal contract is `ServiceMetadata`: service id, aliases, owner, team, environments, permissions, approval policy, runbooks, and dependencies.
+
+LangGraph resolves service context before model-driven tool planning. This lets the planner choose logs, cluster status, alerts, resources, runbooks, and delivery approval context with a concrete service target instead of relying only on keywords.
+
 ## Platform AIOps Agent
 
 The Platform AIOps Agent is a read-only support assistant for AWS platform operations.

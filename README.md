@@ -79,6 +79,9 @@ curl -X POST http://127.0.0.1:8000/api/agent/chat \
 | `AWS_ROLE_ARN` | 否 | 后续真实 AWS AssumeRole 使用；当前 mock provider 不使用。 |
 | `AWS_REGION` | 否 | AWS 区域，mock provider 默认 `us-east-1`。 |
 | `PORT` | 否 | HTTP 端口，默认 `8000`。 |
+| `SERVICE_CATALOG_SOURCE` | 否 | 服务目录来源：`mock`、`backstage`、`cmdb`，默认 `mock`。 |
+| `BACKSTAGE_CATALOG_URL` | 否 | 当 `SERVICE_CATALOG_SOURCE=backstage` 时使用，例如 Backstage Catalog API 的 `/api/catalog` 地址。 |
+| `CMDB_SERVICE_CATALOG_URL` | 否 | 当 `SERVICE_CATALOG_SOURCE=cmdb` 时使用，要求返回 `ServiceMetadata[]` 或 `{ "services": ServiceMetadata[] }`。 |
 
 ## Agent 调用链路
 
@@ -188,6 +191,34 @@ flowchart TD
 ## 轻量 CMDB / Service Catalog
 
 当前版本已经实现轻量 Service Catalog，用来给 Agent 提供“服务地图”。它不是简单关键词表，而是结构化服务元数据 + 别名匹配 + 依赖关系。
+
+代码层已经抽象成 `ServiceCatalogProvider`，默认使用 mock 数据，本地可直接运行；生产环境可以通过环境变量切换到 Backstage Catalog 或 HTTP CMDB：
+
+```bash
+# 默认本地模拟
+SERVICE_CATALOG_SOURCE=mock
+
+# 接 Backstage Catalog
+SERVICE_CATALOG_SOURCE=backstage
+BACKSTAGE_CATALOG_URL=https://backstage.example.com/api/catalog
+
+# 接公司内部 CMDB
+SERVICE_CATALOG_SOURCE=cmdb
+CMDB_SERVICE_CATALOG_URL=https://cmdb.example.com/api/aiops/services
+```
+
+Provider 结构：
+
+```mermaid
+flowchart LR
+  Agent["AIOps Agent"] --> Catalog["ServiceCatalog"]
+  Catalog --> Provider["ServiceCatalogProvider"]
+  Provider --> Mock["MockServiceCatalogProvider"]
+  Provider --> Backstage["BackstageServiceCatalogProvider"]
+  Provider --> CMDB["HttpCmdbServiceCatalogProvider"]
+  Backstage --> Entity["Backstage Component Entity"]
+  CMDB --> Metadata["ServiceMetadata JSON"]
+```
 
 Service Catalog 记录：
 

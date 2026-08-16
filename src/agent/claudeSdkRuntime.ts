@@ -64,7 +64,7 @@ export class ClaudeSdkAgentRuntime {
       };
     }
 
-    const deliveryChange = createDeliveryChangeIfNeeded(combinedMessage, user.username);
+    const deliveryChange = await createDeliveryChangeIfNeeded(combinedMessage, user.username);
     if (deliveryChange) {
       conversationStore?.addDeliveryChange(conversation!, deliveryChange.id);
       const answer = `已生成待审批变更计划：${deliveryChange.title}。该操作不会直接执行，必须审批后才能进入执行阶段。`;
@@ -119,14 +119,14 @@ function requiredClarification(message: string): string | undefined {
   return undefined;
 }
 
-function createDeliveryChangeIfNeeded(message: string, requestedBy: string) {
+async function createDeliveryChangeIfNeeded(message: string, requestedBy: string) {
   const text = message.toLowerCase();
   if (!hasWriteIntent(message)) {
     return undefined;
   }
 
   const ip = message.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)?.[0];
-  const serviceResolution = serviceCatalog.resolve(message);
+  const serviceResolution = await serviceCatalog.resolve(message);
   const environment = text.includes("staging") ? "staging" : "prod";
   const serviceName = serviceResolution?.service.name ?? "platform-api";
   const runtime = serviceResolution?.service.environments.find((item) => item.name === environment);

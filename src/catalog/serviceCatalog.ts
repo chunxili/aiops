@@ -33,7 +33,51 @@ export type ServiceResolution = {
   matchedTerms: string[];
 };
 
-const services: ServiceMetadata[] = [
+export type ServiceCatalogProvider = {
+  list(): Promise<ServiceMetadata[]>;
+};
+
+export type ServiceCatalogSource = "mock" | "backstage" | "cmdb";
+
+export class MockServiceCatalogProvider implements ServiceCatalogProvider {
+  async list(): Promise<ServiceMetadata[]> {
+    return mockServices;
+  }
+}
+
+export class BackstageServiceCatalogProvider implements ServiceCatalogProvider {
+  async list(): Promise<ServiceMetadata[]> {
+    if (!process.env.BACKSTAGE_CATALOG_URL) {
+      return mockServices;
+    }
+
+    const response = await fetch(`${process.env.BACKSTAGE_CATALOG_URL.replace(/\/$/, "")}/entities?filter=kind=Component`);
+    if (!response.ok) {
+      throw new Error(`Backstage catalog request failed with status ${response.status}.`);
+    }
+
+    const entities = (await response.json()) as BackstageEntity[];
+    return entities.map(fromBackstageEntity).filter((service): service is ServiceMetadata => Boolean(service));
+  }
+}
+
+export class HttpCmdbServiceCatalogProvider implements ServiceCatalogProvider {
+  async list(): Promise<ServiceMetadata[]> {
+    if (!process.env.CMDB_SERVICE_CATALOG_URL) {
+      return mockServices;
+    }
+
+    const response = await fetch(process.env.CMDB_SERVICE_CATALOG_URL);
+    if (!response.ok) {
+      throw new Error(`CMDB catalog request failed with status ${response.status}.`);
+    }
+
+    const payload = (await response.json()) as { services?: ServiceMetadata[] } | ServiceMetadata[];
+    return Array.isArray(payload) ? payload : payload.services ?? [];
+  }
+}
+
+const mockServices: ServiceMetadata[] = [
   {
     id: "payment-api",
     name: "payment-api",
@@ -123,11 +167,14 @@ const services: ServiceMetadata[] = [
 ];
 
 export class ServiceCatalog {
-  list(): ServiceMetadata[] {
-    return services;
+  constructor(private readonly provider: ServiceCatalogProvider = createServiceCatalogProvider()) {}
+
+  async list(): Promise<ServiceMetadata[]> {
+    return this.provider.list();
   }
 
-  resolve(message: string): ServiceResolution | undefined {
+  async resolve(message: string): Promise<ServiceResolution | undefined> {
+    const services = await this.provider.list();
     const text = normalize(message);
     const scored = services
       .map((service) => scoreService(service, text))
@@ -138,6 +185,73 @@ export class ServiceCatalog {
 }
 
 export const serviceCatalog = new ServiceCatalog();
+
+export function createServiceCatalogProvider(): ServiceCatalogProvider {
+  const source = (process.env.SERVICE_CATALOG_SOURCE ?? "mock").toLowerCase() as ServiceCatalogSource;
+  if (source === "backstage") {
+    return new BackstageServiceCatalogProvider();
+  }
+  if (source === "cmdb") {
+    return new HttpCmdbServiceCatalogProvider();
+  }
+  return new MockServiceCatalogProvider();
+}
+
+type BackstageEntity = {
+  metadata?: {
+    name?: string;
+    title?: string;
+    description?: string;
+    annotations?: Record<string, string>;
+    tags?: string[];
+  };
+  spec?: {
+    owner?: string;
+    system?: string;
+    lifecycle?: string;
+    dependsOn?: string[];
+  };
+};
+
+function fromBackstageEntity(entity: BackstageEntity): ServiceMetadata | undefined {
+  const name = entity.metadata?.name;
+  if (!name) {
+    return undefined;
+  }
+
+  const annotations = entity.metadata?.annotations ?? {};
+  const environment = (annotations["aiops/environment"] as "dev" | "staging" | "prod" | undefined) ?? "prod";
+  const cluster = annotations["aiops/cluster"] ?? "unknown-cluster";
+  const namespace = annotations["aiops/namespace"] ?? name;
+
+  return {
+    id: name,
+    name,
+    aliases: [entity.metadata?.title, ...(entity.metadata?.tags ?? [])].filter((value): value is string => Boolean(value)),
+    description: entity.metadata?.description ?? `${name} service from Backstage catalog.`,
+    owner: entity.spec?.owner ?? "unknown-owner",
+    team: entity.spec?.system ?? entity.spec?.owner ?? "unknown-team",
+    environments: [
+      {
+        name: environment,
+        cluster,
+        namespace,
+        logGroup: annotations["aiops/log-group"] ?? `/aws/eks/${cluster}/${name}`,
+        dashboardUrl: annotations["aiops/dashboard-url"] ?? "",
+      },
+    ],
+    permissions: parseCsv(annotations["aiops/permissions"] ?? "AIOps,EKS,Log,Alert,Delivery"),
+    approvalPolicy: {
+      prod: parseCsv(annotations["aiops/prod-approvers"] ?? `${entity.spec?.owner ?? "service-owner"},sre-approver`),
+      nonProd: parseCsv(annotations["aiops/nonprod-approvers"] ?? entity.spec?.owner ?? "service-owner"),
+    },
+    runbooks: parseCsv(annotations["aiops/runbooks"] ?? ""),
+    dependencies: (entity.spec?.dependsOn ?? []).map((dependency) => ({
+      service: dependency.split("/").pop() ?? dependency,
+      type: "downstream",
+    })),
+  };
+}
 
 function scoreService(service: ServiceMetadata, text: string): ServiceResolution {
   const matchedTerms: string[] = [];
@@ -186,4 +300,11 @@ function scoreService(service: ServiceMetadata, text: string): ServiceResolution
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseCsv(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

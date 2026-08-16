@@ -52,8 +52,8 @@ export class AnalysisPlanner {
       serviceResolution: Annotation<ServiceResolution | undefined>(),
     });
 
-    const resolveContextNode = (state: typeof GraphState.State) => ({
-      serviceResolution: serviceCatalog.resolve(state.message),
+    const resolveContextNode = async (state: typeof GraphState.State) => ({
+      serviceResolution: await serviceCatalog.resolve(state.message),
     });
 
     const planNode = async (state: typeof GraphState.State) => ({
