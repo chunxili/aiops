@@ -3,6 +3,7 @@ import { z } from "zod";
 export const chatRequestSchema = z.object({
   message: z.string().min(1),
   session_id: z.string().optional(),
+  conversation_id: z.string().optional(),
 });
 
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
@@ -45,6 +46,10 @@ export type SelfHealingProposal = {
 
 export type ChatResponse = {
   answer: string;
+  conversation_id?: string;
+  needs_clarification?: boolean;
+  clarification_question?: string;
+  delivery_change_id?: string;
   tool_calls: ToolCall[];
   analysis_plan?: AnalysisStep[];
   findings?: AnalysisFinding[];

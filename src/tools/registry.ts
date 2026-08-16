@@ -27,11 +27,15 @@ export type ToolManifest = {
 };
 
 export class UnknownToolError extends Error {}
+export class ToolPermissionError extends Error {}
 
 export class ToolRegistry {
   private readonly tools: Record<string, ToolFunction>;
 
-  constructor(private readonly provider: AwsProvider) {
+  constructor(
+    private readonly provider: AwsProvider,
+    private readonly allowedCategories?: string[],
+  ) {
     this.tools = {
       query_alerts: queryAlerts,
       query_service_cost: queryServiceCost,
@@ -50,11 +54,12 @@ export class ToolRegistry {
   }
 
   names(): string[] {
-    return Object.keys(this.tools);
+    const allowed = new Set(this.manifests().map((manifest) => manifest.name));
+    return Object.keys(this.tools).filter((name) => allowed.has(name));
   }
 
   manifests(): ToolManifest[] {
-    return [
+    const manifests: ToolManifest[] = [
       {
         name: "query_alerts",
         category: "Alert",
@@ -128,6 +133,11 @@ export class ToolRegistry {
         phases: ["overview"],
       },
     ];
+    if (!this.allowedCategories || this.allowedCategories.length === 0) {
+      return manifests;
+    }
+    const allowed = new Set(this.allowedCategories);
+    return manifests.filter((manifest) => allowed.has(manifest.category));
   }
 
   selectForMessage(message: string): string[] {
@@ -144,8 +154,10 @@ export class ToolRegistry {
       query_aiops_summary: ["aiops", "overview", "summary", "all signals", "全套", "总结", "总览"],
     };
 
+    const allowed = new Set(this.names());
     return Object.entries(selectionRules)
       .filter(([, keywords]) => keywords.some((keyword) => text.includes(keyword)))
+      .filter(([name]) => allowed.has(name))
       .map(([name]) => name);
   }
 
@@ -154,6 +166,9 @@ export class ToolRegistry {
     const tool = this.tools[name];
     if (!tool) {
       throw new UnknownToolError(`Unknown tool '${name}'.`);
+    }
+    if (!this.names().includes(name)) {
+      throw new ToolPermissionError(`Tool '${name}' is not allowed for the current user.`);
     }
     return tool(this.provider);
   }

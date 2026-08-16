@@ -13,7 +13,13 @@ export const createChangeRequestSchema = z.object({
   actions: z
     .array(
       z.object({
-        type: z.enum(["create_ticket", "trigger_pipeline", "rollback_release", "scale_service"]),
+        type: z.enum([
+          "create_ticket",
+          "trigger_pipeline",
+          "rollback_release",
+          "scale_service",
+          "update_waf_blacklist",
+        ]),
         target: z.string().min(1),
         parameters: z.record(z.unknown()).default({}),
       }),

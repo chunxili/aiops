@@ -4,7 +4,8 @@ export type DeliveryActionType =
   | "create_ticket"
   | "trigger_pipeline"
   | "rollback_release"
-  | "scale_service";
+  | "scale_service"
+  | "update_waf_blacklist";
 
 export type DeliveryAction = {
   type: DeliveryActionType;

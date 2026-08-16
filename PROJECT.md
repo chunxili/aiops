@@ -83,6 +83,16 @@ GET  /api/delivery/changes/:id/audit    查看审计日志
 
 当前执行器是 mock，不会修改真实基础设施。
 
+### 用户身份、权限与对话管理
+
+```text
+Keycloak-compatible 身份解析
+模块权限隔离
+用户级 conversation 历史
+多轮澄清
+写操作转待审批 Delivery Change
+```
+
 ## 扩展方式
 
 后续把原 AIOps 平台功能接入 Agent，推荐走 Tool 方式：
@@ -136,6 +146,8 @@ LOCAL_MODEL_API_KEY=
 3. 交付动作必须有审批、RBAC、审计、幂等和回滚方案。
 4. 大模型只负责理解、分析、生成建议，不直接绕过后端执行生产变更。
 5. 生产环境变更需要更严格审批和变更窗口。
+6. 用户身份和模块权限来自 Keycloak，上下文和工具执行按用户隔离。
+7. 多轮对话必须绑定 conversation_id，不能跨用户读取历史。
 ```
 
 ## 当前仓库

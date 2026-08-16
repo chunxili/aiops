@@ -110,6 +110,81 @@ sequenceDiagram
   B-->>U: 展示结论、证据、表格或 JSON
 ```
 
+## 用户身份、权限与对话管理
+
+当前版本已经实现 Keycloak-compatible 的第一阶段接入：Backstage 调用 Agent 时可以通过请求头传入用户身份、角色、组和模块权限。生产环境可以把这一层替换成真正的 Keycloak token 校验或 introspection。
+
+本地模拟请求头：
+
+```text
+x-user-id: alice
+x-user-name: alice
+x-user-roles: sre,platform
+x-user-groups: platform-team
+x-module-permissions: Alert,EKS,Log,AIOps,Delivery
+```
+
+权限和会话隔离链路：
+
+```mermaid
+flowchart LR
+  Backstage["Backstage + Keycloak Token"] --> Agent["AIOps Agent API"]
+  Agent --> Identity["Identity Extractor"]
+  Identity --> Permissions["模块权限"]
+  Permissions --> Registry["ToolRegistry 权限过滤"]
+  Identity --> Conversation["用户独立 Conversation Store"]
+  Conversation --> History["历史消息 / 工具调用 / Findings / Delivery Changes"]
+```
+
+已实现会话接口：
+
+```text
+POST /api/agent/chat
+GET  /api/agent/conversations
+GET  /api/agent/conversations/:conversationId
+```
+
+行为约束：
+
+- 每个用户只能访问自己的 `conversation_id`。
+- `ToolRegistry` 会按 `x-module-permissions` 过滤用户可见工具。
+- 没有模块权限的工具不会进入模型规划上下文，也不能被直接执行。
+- 对话历史保存用户消息、Agent 回复、工具调用、findings 和交付变更引用。
+
+## 多轮澄清与非只读变更
+
+Agent 已经支持基础多轮澄清。遇到写操作但缺少目标对象时，不会直接执行，也不会立即创建变更，而是返回澄清问题。
+
+示例：
+
+```text
+用户：帮我设置 WAF 黑名单
+Agent：这个操作涉及变更。请补充目标对象，例如要加入 WAF 黑名单的 IP、服务名、环境，以及变更原因。
+用户：IP 是 203.0.113.10，生产环境，原因是恶意扫描
+Agent：生成待审批 WAF 黑名单变更计划
+```
+
+写操作处理规则：
+
+```mermaid
+flowchart TD
+  Request["用户请求"] --> Intent["识别是否写操作"]
+  Intent -->|只读| Read["LangGraph + Read Tools"]
+  Intent -->|写操作但信息不足| Ask["返回澄清问题"]
+  Ask --> NextTurn["同 conversation_id 下一轮补充"]
+  NextTurn --> Intent
+  Intent -->|写操作且信息完整| Permission["检查 Delivery 权限"]
+  Permission -->|无权限| Deny["拒绝创建变更"]
+  Permission -->|有权限| Change["创建待审批 Delivery Change"]
+  Change --> Approval["审批后才能执行"]
+```
+
+当前已支持的写操作变更类型：
+
+- `update_waf_blacklist`
+- `scale_service`
+- `rollback_release`
+
 ## 连接本地大模型
 
 本项目默认按 OpenAI-compatible 接口连接本地大模型。只要你的本地模型服务提供：
