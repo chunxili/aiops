@@ -8,7 +8,7 @@
 POST /api/agent/chat
 ```
 
-当前版本不需要真实 MiniMax Key，也不需要真实 AWS 账号即可本地运行。没有配置 `MINIMAX_API_KEY` 时，会使用 mock 大模型；AWS 账号由 `MockAwsProvider` 模拟。
+当前版本默认连接本地 OpenAI-compatible 大模型接口，也可以切换到 MiniMax 或 mock 模型。AWS 账号由 `MockAwsProvider` 模拟。
 
 ## 总体架构
 
@@ -18,21 +18,24 @@ flowchart LR
   UI -->|POST /api/agent/chat| API["TypeScript Express API"]
   API --> Orchestrator["AgentOrchestrator"]
   Orchestrator --> Runtime["Claude-SDK-shaped Runtime"]
-  Runtime --> Registry["ToolRegistry"]
+  Runtime --> Planner["AnalysisPlanner"]
+  Planner --> Registry["ToolRegistry"]
   Registry --> Tools["只读 AIOps 工具集"]
   Tools --> AWS["模拟 AWS Provider"]
-  Runtime --> Model["MiniMax Model Adapter"]
+  Runtime --> Model["Local OpenAI-compatible Model Adapter"]
   Model --> Answer["分析结论"]
+  Planner --> Findings["根因发现 / 自愈建议"]
   Registry --> Evidence["结构化工具证据"]
   Answer --> UI
   Evidence --> UI
+  Findings --> UI
 ```
 
 ## 代码结构
 
 ```text
 src/app/              Express 应用和 HTTP 路由
-src/agent/            Claude SDK 形态运行时、Agent 编排、MiniMax 适配器
+src/agent/            Claude SDK 形态运行时、动态分析 Planner、本地 OpenAI-compatible 模型适配器
 src/tools/            只读工具：AIOps、Alert、FinOps、EKS、Resource、Log
 src/integrations/aws/ 模拟 AWS 账号 Provider，后续接 AssumeRole
 src/schemas/          Zod 请求校验和 TypeScript 响应类型
@@ -66,7 +69,11 @@ curl -X POST http://127.0.0.1:8000/api/agent/chat \
 
 | 变量 | 是否必需 | 说明 |
 | --- | --- | --- |
-| `MINIMAX_API_KEY` | 否 | 配置后调用 MiniMax Chat Completions；不配置则使用 mock 模型。 |
+| `MODEL_PROVIDER` | 否 | 模型提供方：`local`、`minimax`、`mock`，默认 `local`。 |
+| `LOCAL_MODEL_BASE_URL` | 否 | 本地 OpenAI-compatible API 地址，默认 `http://127.0.0.1:11434`。 |
+| `LOCAL_MODEL_NAME` | 否 | 本地模型名，默认 `qwen2.5`。 |
+| `LOCAL_MODEL_API_KEY` | 否 | 本地模型如果需要鉴权则配置；Ollama 等通常可留空。 |
+| `MINIMAX_API_KEY` | 否 | 当 `MODEL_PROVIDER=minimax` 时使用。 |
 | `MINIMAX_BASE_URL` | 否 | MiniMax API 地址，默认 `https://api.minimax.io`。 |
 | `MINIMAX_MODEL` | 否 | MiniMax 模型名，默认 `MiniMax-M3`。 |
 | `AWS_ROLE_ARN` | 否 | 后续真实 AWS AssumeRole 使用；当前 mock provider 不使用。 |
@@ -81,19 +88,73 @@ sequenceDiagram
   participant B as Backstage React
   participant A as /api/agent/chat
   participant R as Claude SDK 形态 Runtime
+  participant P as AnalysisPlanner
   participant T as ToolRegistry
-  participant M as MiniMax Adapter
+  participant M as Local OpenAI Adapter
 
   U->>B: 输入自然语言问题
   B->>A: POST message
   A->>R: 创建 Agent 请求
-  R->>T: 根据意图选择只读工具
-  T-->>R: 返回结构化工具结果
-  R->>M: 发送用户问题 + 工具上下文
+  R->>P: 规划多步骤分析链路
+  P->>T: detect：查告警/异常信号
+  T-->>P: 返回第一批证据
+  P->>T: correlate：查集群/日志/资源
+  T-->>P: 返回关联证据
+  P->>T: diagnose：查诊断/Runbook
+  T-->>P: 返回根因和处置建议
+  P-->>R: analysis_plan + findings + self_healing_proposals
+  R->>M: 发送用户问题 + 工具上下文到 /v1/chat/completions
   M-->>R: 返回分析结论
-  R-->>A: answer + tool_calls
+  R-->>A: answer + tool_calls + findings
   A-->>B: 返回聊天响应和证据
   B-->>U: 展示结论、证据、表格或 JSON
+```
+
+## 连接本地大模型
+
+本项目默认按 OpenAI-compatible 接口连接本地大模型。只要你的本地模型服务提供：
+
+```text
+POST /v1/chat/completions
+```
+
+就可以直接接入，例如 Ollama、vLLM、LM Studio、LocalAI 或公司内部网关。
+
+环境变量示例：
+
+```bash
+MODEL_PROVIDER=local
+LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434
+LOCAL_MODEL_NAME=qwen2.5
+LOCAL_MODEL_API_KEY=
+```
+
+如果你的本地服务地址已经包含 `/v1`，这里不要重复写 `/v1`，代码会自动拼接 `/v1/chat/completions`。
+
+调用关系：
+
+```mermaid
+flowchart LR
+  Runtime["Claude SDK 形态 Runtime"] --> Adapter["LocalOpenAICompatibleAdapter"]
+  Adapter --> Endpoint["本地 /v1/chat/completions"]
+  Endpoint --> LLM["本地大模型"]
+  Runtime --> Tools["只读工具上下文"]
+  Tools --> Adapter
+```
+
+切换到 mock 模型：
+
+```bash
+MODEL_PROVIDER=mock
+```
+
+切换到 MiniMax：
+
+```bash
+MODEL_PROVIDER=minimax
+MINIMAX_API_KEY=你的 MiniMax Key
+MINIMAX_MODEL=MiniMax-M3
+MINIMAX_BASE_URL=https://api.minimax.io
 ```
 
 ## AIOps 工具能力
@@ -143,6 +204,32 @@ AIOps 关联分析工具：
 - `query_cost_anomalies`
 - `query_runbook_recommendations`
 - `query_aiops_summary`
+
+## 动态多功能联动分析
+
+Agent 已经实现 `AnalysisPlanner`，不再只是一次性调用单个工具。它会根据用户问题生成多阶段分析链路。
+
+异常分析默认链路：
+
+```mermaid
+flowchart LR
+  Input["用户：集群异常/告警/错误"] --> Detect["Detect：确认告警和异常信号"]
+  Detect --> Correlate["Correlate：关联 EKS、日志、资源"]
+  Correlate --> Diagnose["Diagnose：形成根因假设和 Runbook"]
+  Diagnose --> Findings["Findings：影响面、根因、证据"]
+  Findings --> Heal["Self-healing Proposal：生成需审批的自愈建议"]
+```
+
+返回结果会包含：
+
+```text
+analysis_plan             多步骤分析计划
+tool_calls                每一步调用过的工具和证据
+findings                  Agent 推导出的发现和根因假设
+self_healing_proposals    后续自愈/交付建议，必须审批后才能执行
+```
+
+自愈建议只生成计划，不会直接改生产环境。真正执行仍然要进入 `/api/delivery/changes` 审批和审计流程。
 
 内部验证路由是 `/api/tools/{tool_name}`。Backstage 前端正常只调用 `/api/agent/chat`。
 

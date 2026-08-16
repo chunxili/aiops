@@ -17,18 +17,19 @@ export class MockModelClient implements ModelClient {
     }
 
     return [
-      "Mock MiniMax AIOps response.",
+      "Mock local OpenAI-compatible AIOps response.",
       "I correlated read-only AWS platform signals across the simulated accounts.",
       ...summaries,
     ].join(" ");
   }
 }
 
-export class MiniMaxChatCompletionsAdapter implements ModelClient {
+export class OpenAICompatibleChatAdapter implements ModelClient {
   constructor(
-    private readonly apiKey: string,
-    private readonly baseUrl = "https://api.minimax.io",
-    private readonly model = "MiniMax-M3",
+    private readonly baseUrl: string,
+    private readonly model: string,
+    private readonly apiKey?: string,
+    private readonly providerName = "local OpenAI-compatible model",
   ) {}
 
   async complete(request: ChatRequest, registry: ToolRegistry): Promise<string> {
@@ -48,7 +49,7 @@ export class MiniMaxChatCompletionsAdapter implements ModelClient {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -70,7 +71,7 @@ export class MiniMaxChatCompletionsAdapter implements ModelClient {
     });
 
     if (!response.ok) {
-      throw new Error(`MiniMax request failed with status ${response.status}.`);
+      throw new Error(`${this.providerName} request failed with status ${response.status}.`);
     }
 
     const body = (await response.json()) as {
@@ -78,20 +79,49 @@ export class MiniMaxChatCompletionsAdapter implements ModelClient {
     };
     const content = body.choices?.[0]?.message?.content;
     if (!content) {
-      throw new Error("MiniMax response did not include message content.");
+      throw new Error(`${this.providerName} response did not include message content.`);
     }
     return content;
   }
 }
 
+export class MiniMaxChatCompletionsAdapter extends OpenAICompatibleChatAdapter {
+  constructor(
+    apiKey: string,
+    baseUrl = "https://api.minimax.io",
+    model = "MiniMax-M3",
+  ) {
+    super(baseUrl, model, apiKey, "MiniMax");
+  }
+}
+
+export class LocalOpenAICompatibleAdapter extends OpenAICompatibleChatAdapter {
+  constructor(
+    baseUrl = "http://127.0.0.1:11434",
+    model = "qwen2.5",
+    apiKey?: string,
+  ) {
+    super(baseUrl, model, apiKey, "local OpenAI-compatible model");
+  }
+}
+
 export function getModelClient(): ModelClient {
-  const apiKey = process.env.MINIMAX_API_KEY;
-  if (apiKey) {
+  const provider = process.env.MODEL_PROVIDER ?? "local";
+  if (provider === "local") {
+    return new LocalOpenAICompatibleAdapter(
+      process.env.LOCAL_MODEL_BASE_URL ?? "http://127.0.0.1:11434",
+      process.env.LOCAL_MODEL_NAME ?? "qwen2.5",
+      process.env.LOCAL_MODEL_API_KEY,
+    );
+  }
+
+  if (provider === "minimax" && process.env.MINIMAX_API_KEY) {
     return new MiniMaxChatCompletionsAdapter(
-      apiKey,
+      process.env.MINIMAX_API_KEY,
       process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io",
       process.env.MINIMAX_MODEL ?? "MiniMax-M3",
     );
   }
+
   return new MockModelClient();
 }
