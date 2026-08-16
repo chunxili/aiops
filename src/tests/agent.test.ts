@@ -88,15 +88,15 @@ describe("agent route", () => {
     const response = await request("/api/agent/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "支付服务 5xx 异常，帮我查根因" }),
+      body: JSON.stringify({ message: "平台服务 5xx 异常，帮我查根因" }),
     });
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.tool_calls.map((call: { name: string }) => call.name)).toContain("query_service_context");
-    expect(body.findings.map((finding: { title: string }) => finding.title)).toContain("已定位服务上下文：payment-api");
+    expect(body.findings.map((finding: { title: string }) => finding.title)).toContain("已定位服务上下文：platform-api");
     expect(body.analysis_plan.every((step: { confidence?: number }) => typeof step.confidence === "number")).toBe(true);
-    expect(body.analysis_plan.flatMap((step: { signals?: string[] }) => step.signals ?? [])).toContain("service:payment-api");
+    expect(body.analysis_plan.flatMap((step: { signals?: string[] }) => step.signals ?? [])).toContain("service:platform-api");
   });
 
   it("stores user-scoped conversation history", async () => {
@@ -272,8 +272,8 @@ describe("tool planning evaluation", () => {
     const planner = new AnalysisPlanner(registry);
     const cases: PlanningEvalCase[] = [
       {
-        name: "payment incident",
-        message: "支付服务 5xx 异常，帮我查根因和影响面",
+        name: "platform incident",
+        message: "平台服务 5xx 异常，帮我查根因和影响面",
         expectedTools: ["query_service_context", "query_alerts", "query_logs", "query_cluster_status", "query_incident_diagnosis"],
       },
       {
@@ -297,6 +297,47 @@ describe("tool planning evaluation", () => {
     const results = evaluatePlanningCases(cases, plans);
     expect(results.every((result) => result.passed)).toBe(true);
     expect(results.map((result) => result.recall)).toEqual([1, 1, 1]);
+  });
+});
+
+describe("demo scenarios", () => {
+  it("exposes runnable AIOps demo scenarios", async () => {
+    const response = await request("/api/demo/scenarios");
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.scenarios.map((scenario: { id: string }) => scenario.id)).toEqual(
+      expect.arrayContaining(["platform-api-5xx-incident", "basic-cluster-query", "basic-resource-query", "limited-permission-user"]),
+    );
+    expect(body.scenarios.map((scenario: { id: string }) => scenario.id)).not.toContain("waf-blacklist-approval");
+    expect(body.scenarios[0].expectedTools).toBeInstanceOf(Array);
+  });
+
+  it("returns a single demo scenario by id", async () => {
+    const response = await request("/api/demo/scenarios/platform-api-5xx-incident");
+
+    expect(response.status).toBe(200);
+    const scenario = await response.json();
+    expect(scenario.userMessage).toContain("平台服务");
+    expect(scenario.expectedTools).toContain("query_service_context");
+  });
+
+  it("demo scenario message exercises the expected agent tool chain", async () => {
+    const scenarioResponse = await request("/api/demo/scenarios/platform-api-5xx-incident");
+    const scenario = await scenarioResponse.json();
+
+    const response = await request("/api/agent/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: scenario.userMessage }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const toolNames = body.tool_calls.map((call: { name: string }) => call.name);
+    for (const tool of scenario.expectedTools) {
+      expect(toolNames).toContain(tool);
+    }
   });
 });
 

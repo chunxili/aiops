@@ -147,6 +147,42 @@ GET  /api/agent/conversations
 GET  /api/agent/conversations/:conversationId
 ```
 
+## Demo 场景库
+
+当前版本已经内置 demo 场景库，方便在没有公司真实数据源的情况下演示完整 AIOps Agent 能力。场景重点放在故障查询、故障分析和用户基础查询，包括平台 API 5xx、EKS Pending Pod、自愈建议、本月成本突增、集群状态查询、资源库存查询和 Keycloak 风格权限隔离。
+
+接口：
+
+```text
+GET /api/demo/scenarios
+GET /api/demo/scenarios/:scenarioId
+```
+
+每个场景包含：
+
+```text
+id
+title
+category
+userMessage
+expectedTools
+expectedFindings
+highlights
+followUp
+```
+
+演示链路：
+
+```mermaid
+flowchart LR
+  Scenario["Demo Scenario"] --> Message["userMessage"]
+  Message --> Chat["POST /api/agent/chat"]
+  Chat --> Plan["analysis_plan"]
+  Chat --> Tools["tool_calls"]
+  Chat --> Findings["findings"]
+  Chat --> Delivery["delivery_change / verification"]
+```
+
 行为约束：
 
 - 每个用户只能访问自己的 `conversation_id`。
@@ -247,8 +283,8 @@ query_service_context
 
 ```mermaid
 flowchart LR
-  User["用户：支付服务 5xx 异常"] --> Resolver["Service Catalog Resolver"]
-  Resolver --> Match["匹配 payment-api"]
+  User["用户：平台服务 5xx 异常"] --> Resolver["Service Catalog Resolver"]
+  Resolver --> Match["匹配 platform-api"]
   Match --> Runtime["prod: platform-prod / payments namespace"]
   Match --> Owner["owner: payments-team"]
   Match --> Logs["logGroup: payment-api"]
@@ -409,7 +445,7 @@ self_healing_proposals    后续自愈/交付建议，必须审批后才能执�
 - `planner`：计划来源，`model` 表示本地模型生成，`rule` 表示规则兜底，`system` 表示系统安全补充。
 - `signals`：服务命中、意图类型、多工具协作等可解释信号。
 
-项目还新增了离线规划评测模块 `src/agent/planningEvaluation.ts`，用于把真实历史问题整理成评测集，检查 Agent 是否选中了预期工具。例如“支付服务 5xx 异常”必须覆盖服务目录、告警、日志、集群和根因诊断工具；“本月费用异常”必须覆盖费用、资源和成本异常工具。
+项目还新增了离线规划评测模块 `src/agent/planningEvaluation.ts`，用于把真实历史问题整理成评测集，检查 Agent 是否选中了预期工具。例如“平台服务 5xx 异常”必须覆盖服务目录、告警、日志、集群和根因诊断工具；“本月费用异常”必须覆盖费用、资源和成本异常工具。
 
 自愈建议只生成计划，不会直接改生产环境。真正执行仍然要进入 `/api/delivery/changes` 审批和审计流程。
 

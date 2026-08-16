@@ -3,6 +3,7 @@ import { getModelClient } from "../agent/modelAdapter.js";
 import { AgentOrchestrator } from "../agent/orchestrator.js";
 import { extractIdentity } from "../auth/identity.js";
 import { ConversationAccessError, ConversationNotFoundError, conversationStore } from "../conversation/store.js";
+import { demoScenarios, getDemoScenario } from "../demo/scenarios.js";
 import { mapDeliveryError, registerDeliveryRoutes } from "../delivery/routes.js";
 import { getAwsProvider } from "../integrations/aws/provider.js";
 import { chatRequestSchema } from "../schemas/agent.js";
@@ -73,6 +74,19 @@ export function createApp() {
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get("/api/demo/scenarios", (_req, res) => {
+    res.json({ scenarios: demoScenarios });
+  });
+
+  app.get("/api/demo/scenarios/:scenarioId", (req, res) => {
+    const scenario = getDemoScenario(req.params.scenarioId);
+    if (!scenario) {
+      res.status(404).json({ detail: `Demo scenario '${req.params.scenarioId}' was not found.` });
+      return;
+    }
+    res.json(scenario);
   });
 
   registerDeliveryRoutes(app);
