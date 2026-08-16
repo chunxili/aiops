@@ -206,6 +206,69 @@ type ToolResult = {
 
 这样旧功能、新功能都可以被 Agent 统一识别、调用、分析，Backstage 前端入口不需要变化。
 
+## 后续交付与变更执行
+
+当前版本只做只读查询和分析。后续如果要让 Agent 支持“交付”，不建议直接把现有只读工具改成可写工具，而是增加独立的 Delivery Actions / Change Workflows 层。
+
+推荐分层：
+
+```mermaid
+flowchart TB
+  User["用户"] --> Chat["Backstage Chat UI"]
+  Chat --> Agent["AIOps Agent"]
+
+  Agent --> Read["Read Tools：查询、诊断、分析"]
+  Read --> Plan["生成变更计划 / 交付建议"]
+  Plan --> Approval["审批：人工确认 / 工单审批 / 变更窗口"]
+  Approval -->|通过| Action["Delivery Actions：执行交付动作"]
+  Approval -->|拒绝| Stop["停止，不执行变更"]
+
+  Action --> CICD["CI/CD 或运维系统"]
+  Action --> Ticket["工单系统"]
+  Action --> Cloud["AWS / Kubernetes / Backstage Actions"]
+  Action --> Audit["审计日志"]
+```
+
+只读工具和交付动作的边界：
+
+| 类型 | 作用 | 是否可改环境 | 示例 |
+| --- | --- | --- | --- |
+| Read Tools | 查询事实、诊断问题、生成证据 | 否 | 查资源、查费用、查日志、查告警、查集群状态 |
+| Delivery Actions | 执行交付和变更 | 是，但必须审批 | 创建工单、触发流水线、执行回滚、扩容、发布配置 |
+| Change Workflows | 串联审批、执行、校验、审计 | 是，但必须受控 | 生成变更计划、等待审批、执行、验证、记录审计 |
+
+交付动作必须具备这些保护：
+
+- 审批：任何写操作都必须先生成计划，再由人或审批系统确认。
+- 权限：按用户、团队、环境、服务做 RBAC 控制。
+- 审计：记录谁发起、谁审批、执行了什么、结果是什么。
+- 幂等：每个交付动作必须有 `changeId` 或 `idempotencyKey`，避免重复执行。
+- 分环境：生产环境默认更严格，至少需要审批和变更窗口。
+- 可回滚：交付计划要包含验证方式和回滚策略。
+- 可解释：Agent 必须展示执行前依据，包括用到的只读工具结果。
+
+后续推荐的交付接口可以长这样：
+
+```text
+POST /api/agent/chat              # 继续作为用户聊天入口
+POST /api/delivery/changes        # 创建变更计划
+POST /api/delivery/changes/:id/approve
+POST /api/delivery/changes/:id/execute
+GET  /api/delivery/changes/:id/audit
+```
+
+核心原则：
+
+```mermaid
+flowchart LR
+  Think["大模型负责理解、分析、生成计划"] --> Gate["审批和权限网关"]
+  Gate --> Execute["确定性后端动作执行"]
+  Execute --> Verify["执行后验证"]
+  Verify --> Audit["审计留痕"]
+```
+
+也就是说，Agent 可以推动交付，但不能绕过审批直接改生产环境。
+
 ## 只读安全边界
 
 ```mermaid
