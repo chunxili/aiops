@@ -139,6 +139,12 @@ describe("delivery workflow", () => {
     const verified = await verifyResponse.json();
     expect(verified.status).toBe("succeeded");
     expect(verified.verificationResult.nextAction).toBe("close_change");
+    expect(verified.verificationResult.checks.map((check: { name: string }) => check.name)).toEqual([
+      "post-change-alerts",
+      "post-change-logs",
+      "post-change-runtime",
+      "post-change-slo",
+    ]);
 
     const auditResponse = await request(`/api/delivery/changes/${change.id}/audit`);
     const audit = await auditResponse.json();
@@ -183,6 +189,7 @@ describe("delivery workflow", () => {
     const verified = await verifyResponse.json();
     expect(verified.status).toBe("rollback_required");
     expect(verified.verificationResult.nextAction).toBe("rollback");
+    expect(verified.verificationResult.checks.every((check: { passed: boolean }) => !check.passed)).toBe(true);
 
     const escalateResponse = await request(`/api/delivery/changes/${change.id}/escalate`, {
       method: "POST",

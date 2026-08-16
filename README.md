@@ -565,6 +565,33 @@ flowchart LR
 - 复查失败后状态进入 `rollback_required`，表示需要回滚或人工判断。
 - `escalate` 用于把失败闭环升级给 SRE、服务 owner 或工单系统。
 
+复查器已经拆成可替换的 checker pipeline：
+
+```mermaid
+flowchart LR
+  Verify["DeliveryVerifier"] --> Alerts["AlertRecoveryChecker"]
+  Verify --> Logs["LogErrorRateChecker"]
+  Verify --> Runtime["RuntimeHealthChecker"]
+  Verify --> SLO["SloChecker"]
+  Alerts --> Result["VerificationResult"]
+  Logs --> Result
+  Runtime --> Result
+  SLO --> Result
+```
+
+当前默认配置：
+
+```bash
+VERIFICATION_SOURCE=mock
+```
+
+生产替换方向：
+
+- `AlertRecoveryChecker`：接 CloudWatch Alarm、Alertmanager 或现有告警平台。
+- `LogErrorRateChecker`：接 CloudWatch Logs Insights、OpenSearch、Loki 或现有日志平台。
+- `RuntimeHealthChecker`：接 EKS/Kubernetes 只读 API，检查 Deployment、Pod、HPA、Service 状态。
+- `SloChecker`：接 Prometheus、Grafana 或 SLO 平台，检查错误率、延迟和 burn rate。
+
 核心原则：
 
 ```mermaid
