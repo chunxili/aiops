@@ -1,6 +1,6 @@
 # AWS Platform AIOps Agent
 
-这是一个面向 AWS 平台运维场景的只读 AIOps Agent。项目已经改造成 TypeScript 版本，目标是兼容既有的 Backstage + TypeScript + React AIOps 平台，让原平台能力和后续扩展能力可以持续接入 Agent。
+这是一个面向 AWS 平台运维场景的 AIOps Agent。项目采用 TypeScript + LangGraph.js，目标是兼容既有的 Backstage + TypeScript + React AIOps 平台，让原平台能力和后续扩展能力可以持续接入 Agent。
 
 前端稳定入口只有一个：
 
@@ -18,7 +18,7 @@ flowchart LR
   UI -->|POST /api/agent/chat| API["TypeScript Express API"]
   API --> Orchestrator["AgentOrchestrator"]
   Orchestrator --> Runtime["Claude-SDK-shaped Runtime"]
-  Runtime --> Planner["AnalysisPlanner"]
+  Runtime --> Planner["LangGraph AnalysisPlanner"]
   Planner --> Registry["ToolRegistry"]
   Registry --> Tools["只读 AIOps 工具集"]
   Tools --> AWS["模拟 AWS Provider"]
@@ -35,7 +35,7 @@ flowchart LR
 
 ```text
 src/app/              Express 应用和 HTTP 路由
-src/agent/            Claude SDK 形态运行时、动态分析 Planner、本地 OpenAI-compatible 模型适配器
+src/agent/            Agent Runtime、LangGraph 动态分析 Planner、本地 OpenAI-compatible 模型适配器
 src/tools/            只读工具：AIOps、Alert、FinOps、EKS、Resource、Log
 src/integrations/aws/ 模拟 AWS 账号 Provider，后续接 AssumeRole
 src/schemas/          Zod 请求校验和 TypeScript 响应类型
@@ -95,7 +95,7 @@ sequenceDiagram
   U->>B: 输入自然语言问题
   B->>A: POST message
   A->>R: 创建 Agent 请求
-  R->>P: 规划多步骤分析链路
+  R->>P: LangGraph 规划多步骤分析链路
   P->>T: detect：查告警/异常信号
   T-->>P: 返回第一批证据
   P->>T: correlate：查集群/日志/资源
@@ -207,18 +207,26 @@ AIOps 关联分析工具：
 
 ## 动态多功能联动分析
 
-Agent 已经实现 `AnalysisPlanner`，不再只是一次性调用单个工具。它会根据用户问题生成多阶段分析链路。
+Agent 已经实现基于 LangGraph.js 的 `AnalysisPlanner`，不再只是一次性调用单个工具。它会根据用户问题生成多阶段分析链路。
 
 异常分析默认链路：
 
 ```mermaid
 flowchart LR
-  Input["用户：集群异常/告警/错误"] --> Detect["Detect：确认告警和异常信号"]
-  Detect --> Correlate["Correlate：关联 EKS、日志、资源"]
-  Correlate --> Diagnose["Diagnose：形成根因假设和 Runbook"]
-  Diagnose --> Findings["Findings：影响面、根因、证据"]
-  Findings --> Heal["Self-healing Proposal：生成需审批的自愈建议"]
+  Input["用户：集群异常/告警/错误"] --> Plan["plan_intent"]
+  Plan --> Execute["execute_tools"]
+  Execute --> Findings["derive_findings"]
+  Findings --> Heal["propose_self_healing"]
 ```
+
+LangGraph 节点职责：
+
+| 节点 | 作用 |
+| --- | --- |
+| `plan_intent` | 识别用户意图，生成多阶段工具计划 |
+| `execute_tools` | 按计划执行单工具或多工具协同分析 |
+| `derive_findings` | 从工具证据中推导异常、根因和影响面 |
+| `propose_self_healing` | 生成需要审批的自愈/交付建议 |
 
 返回结果会包含：
 

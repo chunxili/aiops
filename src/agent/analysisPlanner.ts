@@ -5,6 +5,7 @@ import type {
   ToolCall,
 } from "../schemas/agent.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 
 export type AnalysisPlanResult = {
   steps: AnalysisStep[];
@@ -17,7 +18,62 @@ export class AnalysisPlanner {
   constructor(private readonly registry: ToolRegistry) {}
 
   async run(message: string): Promise<AnalysisPlanResult> {
-    const steps = this.plan(message);
+    const graph = this.buildGraph();
+    const result = await graph.invoke({
+      message,
+      steps: [],
+      toolCalls: [],
+      findings: [],
+      selfHealingProposals: [],
+    });
+
+    return {
+      steps: result.steps,
+      toolCalls: result.toolCalls,
+      findings: result.findings,
+      selfHealingProposals: result.selfHealingProposals,
+    };
+  }
+
+  private buildGraph() {
+    const GraphState = Annotation.Root({
+      message: Annotation<string>(),
+      steps: Annotation<AnalysisStep[]>(),
+      toolCalls: Annotation<ToolCall[]>(),
+      findings: Annotation<AnalysisFinding[]>(),
+      selfHealingProposals: Annotation<SelfHealingProposal[]>(),
+    });
+
+    const planNode = (state: typeof GraphState.State) => ({
+      steps: this.plan(state.message),
+    });
+
+    const executeNode = async (state: typeof GraphState.State) => ({
+      toolCalls: await this.executeSteps(state.steps),
+    });
+
+    const findingsNode = (state: typeof GraphState.State) => ({
+      findings: this.deriveFindings(state.toolCalls),
+    });
+
+    const selfHealingNode = (state: typeof GraphState.State) => ({
+      selfHealingProposals: this.proposeSelfHealing(state.findings),
+    });
+
+    return new StateGraph(GraphState)
+      .addNode("plan_intent", planNode)
+      .addNode("execute_tools", executeNode)
+      .addNode("derive_findings", findingsNode)
+      .addNode("propose_self_healing", selfHealingNode)
+      .addEdge(START, "plan_intent")
+      .addEdge("plan_intent", "execute_tools")
+      .addEdge("execute_tools", "derive_findings")
+      .addEdge("derive_findings", "propose_self_healing")
+      .addEdge("propose_self_healing", END)
+      .compile();
+  }
+
+  private async executeSteps(steps: AnalysisStep[]): Promise<ToolCall[]> {
     const toolCalls: ToolCall[] = [];
 
     for (const step of steps) {
@@ -35,15 +91,7 @@ export class AnalysisPlanner {
       }
     }
 
-    const findings = this.deriveFindings(toolCalls);
-    const selfHealingProposals = this.proposeSelfHealing(findings);
-
-    return {
-      steps,
-      toolCalls,
-      findings,
-      selfHealingProposals,
-    };
+    return toolCalls;
   }
 
   private plan(message: string): AnalysisStep[] {

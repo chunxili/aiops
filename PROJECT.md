@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-AIOps agent 是一套面向 Backstage + TypeScript + React AIOps 平台的统一 Agent 服务。
+AIOps agent 是一套面向 Backstage + TypeScript + React AIOps 平台的统一 Agent 服务，核心编排采用 LangGraph.js。
 
 目标是把原 AIOps 平台已有能力，以及后续新增能力，统一接入一个聊天式 Agent 入口：
 
@@ -17,6 +17,7 @@ POST /api/agent/chat
 ```text
 语言：TypeScript
 后端：Node.js + Express
+Agent 编排：LangGraph.js
 前端宿主：Backstage + React
 Schema：Zod
 测试：Vitest
@@ -32,7 +33,8 @@ flowchart LR
   UI -->|POST /api/agent/chat| API["TypeScript Express API"]
   API --> Orchestrator["AgentOrchestrator"]
   Orchestrator --> Runtime["Claude SDK 形态 Runtime"]
-  Runtime --> Registry["ToolRegistry"]
+  Runtime --> Planner["LangGraph AnalysisPlanner"]
+  Planner --> Registry["ToolRegistry"]
   Registry --> Tools["Read Tools / AIOps Tools"]
   Tools --> AWS["MockAwsProvider / Future AssumeRole"]
   Runtime --> Model["Local OpenAI-compatible Model Adapter"]
