@@ -5,6 +5,7 @@ import { DeliveryService } from "../delivery/service.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { AnalysisPlanner } from "./analysisPlanner.js";
 import type { ModelClient } from "./modelAdapter.js";
+import { serviceCatalog } from "../catalog/serviceCatalog.js";
 
 export class ClaudeSdkAgentRuntime {
   constructor(
@@ -22,7 +23,7 @@ export class ClaudeSdkAgentRuntime {
       username: "local-user",
       roles: [],
       groups: [],
-      modulePermissions: ["Alert", "FinOps", "EKS", "Resource", "Log", "AIOps", "Delivery"],
+      modulePermissions: ["Alert", "FinOps", "EKS", "Resource", "Log", "AIOps", "ServiceCatalog", "Delivery"],
     };
     const conversation = conversationStore?.getOrCreate(user, request.conversation_id ?? request.session_id);
     const combinedMessage = combineWithPendingClarification(conversation?.clarification?.originalMessage, request.message);
@@ -125,14 +126,18 @@ function createDeliveryChangeIfNeeded(message: string, requestedBy: string) {
   }
 
   const ip = message.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)?.[0];
-  const service = text.includes("platform-staging") ? "platform-staging/api" : "platform-prod/api";
+  const serviceResolution = serviceCatalog.resolve(message);
+  const environment = text.includes("staging") ? "staging" : "prod";
+  const serviceName = serviceResolution?.service.name ?? "platform-api";
+  const runtime = serviceResolution?.service.environments.find((item) => item.name === environment);
+  const service = runtime ? `${runtime.cluster}/${runtime.namespace}/${serviceName}` : `${environment}/${serviceName}`;
   const delivery = new DeliveryService();
 
   if (hasAny(text, ["黑名单", "blacklist", "blocklist", "拉黑", "waf"])) {
     return delivery.create({
       title: "更新 WAF 黑名单",
-      summary: `根据用户请求生成 WAF 黑名单变更计划，目标 IP：${ip ?? "待确认"}。`,
-      environment: text.includes("staging") ? "staging" : "prod",
+      summary: `根据用户请求生成 WAF 黑名单变更计划，目标 IP：${ip ?? "待确认"}；关联服务：${serviceName}。`,
+      environment,
       requestedBy,
       actions: [
         {
@@ -150,8 +155,8 @@ function createDeliveryChangeIfNeeded(message: string, requestedBy: string) {
   if (hasAny(text, ["扩容", "scale"])) {
     return delivery.create({
       title: "服务扩容变更计划",
-      summary: "根据用户请求生成服务扩容变更计划。",
-      environment: text.includes("staging") ? "staging" : "prod",
+      summary: `根据用户请求生成 ${serviceName} 的服务扩容变更计划。`,
+      environment,
       requestedBy,
       actions: [{ type: "scale_service", target: service, parameters: { replicas: 6 } }],
       evidence: ["query_cluster_status", "query_logs"],
@@ -162,8 +167,8 @@ function createDeliveryChangeIfNeeded(message: string, requestedBy: string) {
 
   return delivery.create({
     title: "回滚变更计划",
-    summary: "根据用户请求生成回滚变更计划。",
-    environment: text.includes("staging") ? "staging" : "prod",
+    summary: `根据用户请求生成 ${serviceName} 的回滚变更计划。`,
+    environment,
     requestedBy,
     actions: [{ type: "rollback_release", target: service, parameters: {} }],
     evidence: ["query_logs", "query_incident_diagnosis"],

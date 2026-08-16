@@ -82,6 +82,19 @@ describe("agent route", () => {
     expect(body.self_healing_proposals[0].actionType).toBe("scale_service");
   });
 
+  it("resolves service context before correlated incident analysis", async () => {
+    const response = await request("/api/agent/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "支付服务 5xx 异常，帮我查根因" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.tool_calls.map((call: { name: string }) => call.name)).toContain("query_service_context");
+    expect(body.findings.map((finding: { title: string }) => finding.title)).toContain("已定位服务上下文：payment-api");
+  });
+
   it("stores user-scoped conversation history", async () => {
     const response = await request("/api/agent/chat", {
       method: "POST",
@@ -267,6 +280,15 @@ describe("tool route", () => {
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body.detail).toContain("read-only guard");
+  });
+
+  it("returns service catalog context", async () => {
+    const response = await request("/api/tools/query_service_context");
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.category).toBe("ServiceCatalog");
+    expect(body.data.services.some((service: { name: string }) => service.name === "payment-api")).toBe(true);
   });
 });
 

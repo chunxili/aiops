@@ -56,7 +56,7 @@ export type ChatResponse = {
   self_healing_proposals?: SelfHealingProposal[];
 };
 
-export type ToolCategory = "Alert" | "FinOps" | "EKS" | "Resource" | "Log" | "AIOps";
+export type ToolCategory = "Alert" | "FinOps" | "EKS" | "Resource" | "Log" | "AIOps" | "ServiceCatalog";
 
 export type ToolResult = {
   tool: string;

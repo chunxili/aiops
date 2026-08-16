@@ -185,6 +185,51 @@ flowchart TD
 - `scale_service`
 - `rollback_release`
 
+## 轻量 CMDB / Service Catalog
+
+当前版本已经实现轻量 Service Catalog，用来给 Agent 提供“服务地图”。它不是简单关键词表，而是结构化服务元数据 + 别名匹配 + 依赖关系。
+
+Service Catalog 记录：
+
+```text
+service id / name
+aliases
+owner / team
+environment
+cluster
+namespace
+logGroup
+dashboard
+approvalPolicy
+runbooks
+dependencies
+permissions
+```
+
+查询工具：
+
+```text
+query_service_context
+```
+
+服务定位链路：
+
+```mermaid
+flowchart LR
+  User["用户：支付服务 5xx 异常"] --> Resolver["Service Catalog Resolver"]
+  Resolver --> Match["匹配 payment-api"]
+  Match --> Runtime["prod: platform-prod / payments namespace"]
+  Match --> Owner["owner: payments-team"]
+  Match --> Logs["logGroup: payment-api"]
+  Match --> Deps["依赖：order-api / redis / rds"]
+  Runtime --> Planner["LangGraph Planner"]
+  Owner --> Approval["审批策略"]
+  Logs --> Planner
+  Deps --> Planner
+```
+
+这样用户不需要准确说出 namespace、log group 或 dashboard。Agent 会先用服务地图定位上下文，再决定调用哪些工具协同分析。
+
 ## 连接本地大模型
 
 本项目默认按 OpenAI-compatible 接口连接本地大模型。只要你的本地模型服务提供：

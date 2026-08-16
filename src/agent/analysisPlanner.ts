@@ -7,12 +7,14 @@ import type {
 import type { ToolRegistry } from "../tools/registry.js";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { ModelClient } from "./modelAdapter.js";
+import { serviceCatalog, type ServiceResolution } from "../catalog/serviceCatalog.js";
 
 export type AnalysisPlanResult = {
   steps: AnalysisStep[];
   toolCalls: ToolCall[];
   findings: AnalysisFinding[];
   selfHealingProposals: SelfHealingProposal[];
+  serviceResolution?: ServiceResolution;
 };
 
 export class AnalysisPlanner {
@@ -36,6 +38,7 @@ export class AnalysisPlanner {
       toolCalls: result.toolCalls,
       findings: result.findings,
       selfHealingProposals: result.selfHealingProposals,
+      serviceResolution: result.serviceResolution,
     };
   }
 
@@ -46,10 +49,15 @@ export class AnalysisPlanner {
       toolCalls: Annotation<ToolCall[]>(),
       findings: Annotation<AnalysisFinding[]>(),
       selfHealingProposals: Annotation<SelfHealingProposal[]>(),
+      serviceResolution: Annotation<ServiceResolution | undefined>(),
+    });
+
+    const resolveContextNode = (state: typeof GraphState.State) => ({
+      serviceResolution: serviceCatalog.resolve(state.message),
     });
 
     const planNode = async (state: typeof GraphState.State) => ({
-      steps: await this.plan(state.message),
+      steps: await this.plan(state.message, state.serviceResolution),
     });
 
     const executeNode = async (state: typeof GraphState.State) => ({
@@ -57,7 +65,7 @@ export class AnalysisPlanner {
     });
 
     const findingsNode = (state: typeof GraphState.State) => ({
-      findings: this.deriveFindings(state.toolCalls),
+      findings: this.deriveFindings(state.toolCalls, state.serviceResolution),
     });
 
     const selfHealingNode = (state: typeof GraphState.State) => ({
@@ -66,10 +74,12 @@ export class AnalysisPlanner {
 
     return new StateGraph(GraphState)
       .addNode("plan_intent", planNode)
+      .addNode("resolve_service_context", resolveContextNode)
       .addNode("execute_tools", executeNode)
       .addNode("derive_findings", findingsNode)
       .addNode("propose_self_healing", selfHealingNode)
-      .addEdge(START, "plan_intent")
+      .addEdge(START, "resolve_service_context")
+      .addEdge("resolve_service_context", "plan_intent")
       .addEdge("plan_intent", "execute_tools")
       .addEdge("execute_tools", "derive_findings")
       .addEdge("derive_findings", "propose_self_healing")
@@ -98,21 +108,30 @@ export class AnalysisPlanner {
     return toolCalls;
   }
 
-  private async plan(message: string): Promise<AnalysisStep[]> {
-    const modelPlan = await this.modelDrivenPlan(message);
+  private async plan(message: string, serviceResolution?: ServiceResolution): Promise<AnalysisStep[]> {
+    const modelPlan = await this.modelDrivenPlan(message, serviceResolution);
     if (modelPlan.length > 0) {
-      return modelPlan;
+      return this.ensureServiceContextStep(modelPlan, serviceResolution);
     }
-    return this.ruleDrivenPlan(message);
+    return this.ensureServiceContextStep(this.ruleDrivenPlan(message, serviceResolution), serviceResolution);
   }
 
-  private async modelDrivenPlan(message: string): Promise<AnalysisStep[]> {
+  private async modelDrivenPlan(message: string, serviceResolution?: ServiceResolution): Promise<AnalysisStep[]> {
     if (!this.modelClient?.planTools) {
       return [];
     }
 
     try {
-      const proposed = await this.modelClient.planTools(message, this.registry);
+      const contextMessage = serviceResolution
+        ? `${message}\n\nResolved service context: ${JSON.stringify({
+            service: serviceResolution.service.name,
+            owner: serviceResolution.service.owner,
+            team: serviceResolution.service.team,
+            environments: serviceResolution.service.environments,
+            dependencies: serviceResolution.service.dependencies,
+          })}`
+        : message;
+      const proposed = await this.modelClient.planTools(contextMessage, this.registry);
       const allowed = new Set(this.registry.names());
       const validSteps = proposed
         .map((step) => ({
@@ -128,7 +147,7 @@ export class AnalysisPlanner {
     }
   }
 
-  private ruleDrivenPlan(message: string): AnalysisStep[] {
+  private ruleDrivenPlan(message: string, serviceResolution?: ServiceResolution): AnalysisStep[] {
     const text = message.toLowerCase();
     const selected = this.registry.selectForMessage(message);
     const steps: AnalysisStep[] = [];
@@ -141,8 +160,10 @@ export class AnalysisPlanner {
     if (isIncident) {
       steps.push({
         phase: "detect",
-        tools: unique(["query_alerts", ...selected]),
-        reason: "先确认是否存在告警、异常信号或用户明确提到的领域。",
+        tools: unique(["query_service_context", "query_alerts", ...selected]),
+        reason: serviceResolution
+          ? `先解析服务上下文并确认 ${serviceResolution.service.name} 的告警或异常信号。`
+          : "先解析服务上下文并确认是否存在告警、异常信号或用户明确提到的领域。",
       });
       steps.push({
         phase: "correlate",
@@ -168,7 +189,7 @@ export class AnalysisPlanner {
     } else if (asksSummary) {
       steps.push({
         phase: "overview",
-        tools: ["query_aiops_summary", "query_alerts", "query_service_cost", "query_cluster_status"],
+        tools: ["query_service_context", "query_aiops_summary", "query_alerts", "query_service_cost", "query_cluster_status"],
         reason: "生成跨域 AIOps 总览。",
       });
     } else {
@@ -193,9 +214,36 @@ export class AnalysisPlanner {
     }));
   }
 
-  private deriveFindings(toolCalls: ToolCall[]): AnalysisFinding[] {
+  private ensureServiceContextStep(steps: AnalysisStep[], serviceResolution?: ServiceResolution): AnalysisStep[] {
+    if (!serviceResolution || !this.registry.names().includes("query_service_context")) {
+      return steps;
+    }
+    if (steps.some((step) => step.tools.includes("query_service_context"))) {
+      return steps;
+    }
+    return [
+      {
+        phase: "resolve-context",
+        tools: ["query_service_context"],
+        reason: `已匹配到服务 ${serviceResolution.service.name}，先读取服务地图、负责人、运行环境和依赖关系。`,
+      },
+      ...steps,
+    ];
+  }
+
+  private deriveFindings(toolCalls: ToolCall[], serviceResolution?: ServiceResolution): AnalysisFinding[] {
     const names = new Set(toolCalls.map((call) => call.name));
     const findings: AnalysisFinding[] = [];
+
+    if (serviceResolution) {
+      const prod = serviceResolution.service.environments.find((environment) => environment.name === "prod");
+      findings.push({
+        severity: "info",
+        title: `已定位服务上下文：${serviceResolution.service.name}`,
+        detail: `匹配方式：${serviceResolution.matchedBy}；负责人：${serviceResolution.service.owner}；生产集群：${prod?.cluster ?? "未配置"}；namespace：${prod?.namespace ?? "未配置"}。`,
+        evidence: ["query_service_context"],
+      });
+    }
 
     if (names.has("query_alerts") && names.has("query_logs")) {
       findings.push({

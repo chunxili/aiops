@@ -21,6 +21,7 @@ export function extractIdentity(req: express.Request): UserIdentity {
       "Resource",
       "Log",
       "AIOps",
+      "ServiceCatalog",
       "Delivery",
     ]),
   };

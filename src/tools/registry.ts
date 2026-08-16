@@ -14,6 +14,7 @@ import {
   queryResourceInventory,
   queryServiceCost,
 } from "./platform.js";
+import { queryServiceContext } from "./serviceCatalog.js";
 
 export type ToolFunction = (provider: AwsProvider) => Promise<ToolResult>;
 
@@ -46,6 +47,7 @@ export class ToolRegistry {
       query_cost_anomalies: queryCostAnomalies,
       query_runbook_recommendations: queryRunbookRecommendations,
       query_aiops_summary: queryAiopsSummary,
+      query_service_context: queryServiceContext,
     };
 
     for (const name of this.names()) {
@@ -132,6 +134,14 @@ export class ToolRegistry {
         examples: ["AIOps 总览", "全套总结", "overall summary"],
         phases: ["overview"],
       },
+      {
+        name: "query_service_context",
+        category: "ServiceCatalog",
+        description: "查询服务目录、别名、负责人、运行环境、集群、namespace、日志、dashboard、审批策略和依赖关系。",
+        readOnly: true,
+        examples: ["支付服务在哪里", "这个服务负责人是谁", "查服务依赖", "service catalog"],
+        phases: ["resolve-context", "detect", "correlate"],
+      },
     ];
     if (!this.allowedCategories || this.allowedCategories.length === 0) {
       return manifests;
@@ -152,6 +162,7 @@ export class ToolRegistry {
       query_cost_anomalies: ["anomaly", "cost spike", "overspend", "异常", "费用异常"],
       query_runbook_recommendations: ["runbook", "triage", "next step", "预案", "下一步"],
       query_aiops_summary: ["aiops", "overview", "summary", "all signals", "全套", "总结", "总览"],
+      query_service_context: ["服务", "负责人", "owner", "namespace", "dashboard", "依赖", "catalog", "cmdb"],
     };
 
     const allowed = new Set(this.names());

@@ -48,6 +48,7 @@ flowchart LR
 ```text
 src/app/              Express 应用和 HTTP 路由
 src/agent/            Agent 编排、Claude SDK 形态运行时、本地模型适配器
+src/catalog/          轻量 CMDB / Service Catalog，保存服务、负责人、运行环境、依赖关系
 src/tools/            只读工具、工具注册表、只读 Guard
 src/delivery/         变更计划、审批、执行、审计、幂等保护
 src/integrations/aws/ 模拟 AWS Provider，后续接真实 AWS
@@ -69,6 +70,7 @@ query_incident_diagnosis      跨域故障诊断
 query_cost_anomalies          成本异常分析
 query_runbook_recommendations Runbook 建议
 query_aiops_summary           AIOps 总览
+query_service_context         服务上下文 / 轻量 CMDB 查询
 ```
 
 ### 交付与变更工作流
