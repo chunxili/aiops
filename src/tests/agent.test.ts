@@ -6,6 +6,7 @@ import type { ChatRequest, ToolPlanStep } from "../schemas/agent.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ModelClient } from "../agent/modelAdapter.js";
 import { BackstageServiceCatalogProvider, ServiceCatalog } from "../catalog/serviceCatalog.js";
+import { evaluatePlanningCases, type PlanningEvalCase } from "../agent/planningEvaluation.js";
 
 process.env.MODEL_PROVIDER = "mock";
 
@@ -94,6 +95,8 @@ describe("agent route", () => {
     const body = await response.json();
     expect(body.tool_calls.map((call: { name: string }) => call.name)).toContain("query_service_context");
     expect(body.findings.map((finding: { title: string }) => finding.title)).toContain("已定位服务上下文：payment-api");
+    expect(body.analysis_plan.every((step: { confidence?: number }) => typeof step.confidence === "number")).toBe(true);
+    expect(body.analysis_plan.flatMap((step: { signals?: string[] }) => step.signals ?? [])).toContain("service:payment-api");
   });
 
   it("stores user-scoped conversation history", async () => {
@@ -252,14 +255,48 @@ describe("LangGraph model-driven planning", () => {
     const planner = new AnalysisPlanner(registry, new PlanningModel());
     const result = await planner.run("为什么服务一直报错，帮我看一下运行状态");
 
-    expect(result.steps).toEqual([
-      {
-        phase: "model-detect",
-        tools: ["query_logs", "query_cluster_status"],
-        reason: "模型根据语义判断需要日志和集群状态。",
-      },
-    ]);
+    expect(result.steps[0]).toMatchObject({
+      phase: "model-detect",
+      tools: ["query_logs", "query_cluster_status"],
+      reason: "模型根据语义判断需要日志和集群状态。",
+      planner: "model",
+    });
+    expect(result.steps[0].confidence).toBeGreaterThan(0.5);
     expect(result.toolCalls.map((call) => call.name)).toEqual(["query_logs", "query_cluster_status"]);
+  });
+});
+
+describe("tool planning evaluation", () => {
+  it("measures expected tool recall across representative AIOps requests", async () => {
+    const registry = new ToolRegistry(new MockAwsProvider());
+    const planner = new AnalysisPlanner(registry);
+    const cases: PlanningEvalCase[] = [
+      {
+        name: "payment incident",
+        message: "支付服务 5xx 异常，帮我查根因和影响面",
+        expectedTools: ["query_service_context", "query_alerts", "query_logs", "query_cluster_status", "query_incident_diagnosis"],
+      },
+      {
+        name: "monthly cost",
+        message: "查看本月费用是否异常，顺便看资源是不是扩太多",
+        expectedTools: ["query_service_cost", "query_resource_inventory", "query_cost_anomalies"],
+      },
+      {
+        name: "self healing",
+        message: "集群异常，帮我逐步分析并给出自愈建议",
+        expectedTools: ["query_alerts", "query_cluster_status", "query_logs", "query_runbook_recommendations"],
+      },
+    ];
+
+    const plans = new Map<string, Awaited<ReturnType<typeof planner.run>>["steps"]>();
+    for (const item of cases) {
+      const result = await planner.run(item.message);
+      plans.set(item.name, result.steps);
+    }
+
+    const results = evaluatePlanningCases(cases, plans);
+    expect(results.every((result) => result.passed)).toBe(true);
+    expect(results.map((result) => result.recall)).toEqual([1, 1, 1]);
   });
 });
 

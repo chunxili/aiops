@@ -390,6 +390,27 @@ findings                  Agent 推导出的发现和根因假设
 self_healing_proposals    后续自愈/交付建议，必须审批后才能执行
 ```
 
+每个 `analysis_plan` 步骤现在还会带规划可解释字段：
+
+```json
+{
+  "phase": "correlate",
+  "tools": ["query_cluster_status", "query_logs"],
+  "reason": "用户描述服务异常，需要关联集群状态和日志。",
+  "confidence": 0.84,
+  "planner": "model",
+  "signals": ["service:payment-api", "intent:incident", "mode:multi-tool"]
+}
+```
+
+字段含义：
+
+- `confidence`：工具规划置信度，表示“这一步工具选择是否充分”，不是根因结论置信度。
+- `planner`：计划来源，`model` 表示本地模型生成，`rule` 表示规则兜底，`system` 表示系统安全补充。
+- `signals`：服务命中、意图类型、多工具协作等可解释信号。
+
+项目还新增了离线规划评测模块 `src/agent/planningEvaluation.ts`，用于把真实历史问题整理成评测集，检查 Agent 是否选中了预期工具。例如“支付服务 5xx 异常”必须覆盖服务目录、告警、日志、集群和根因诊断工具；“本月费用异常”必须覆盖费用、资源和成本异常工具。
+
 自愈建议只生成计划，不会直接改生产环境。真正执行仍然要进入 `/api/delivery/changes` 审批和审计流程。
 
 工具计划格式：

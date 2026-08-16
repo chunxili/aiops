@@ -19,12 +19,16 @@ export type AnalysisStep = {
   phase: string;
   tools: string[];
   reason: string;
+  confidence?: number;
+  planner?: "model" | "rule" | "system";
+  signals?: string[];
 };
 
 export type ToolPlanStep = {
   phase: string;
   tools: string[];
   reason: string;
+  confidence?: number;
 };
 
 export type AnalysisFinding = {
