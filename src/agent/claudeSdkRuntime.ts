@@ -10,7 +10,7 @@ export class ClaudeSdkAgentRuntime {
   ) {}
 
   async run(request: ChatRequest): Promise<ChatResponse> {
-    const planner = new AnalysisPlanner(this.registry);
+    const planner = new AnalysisPlanner(this.registry, this.modelClient);
     const analysis = await planner.run(request.message);
 
     const answer = await this.modelClient.complete(request, this.registry);

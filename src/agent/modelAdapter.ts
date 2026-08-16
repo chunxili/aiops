@@ -1,8 +1,9 @@
-import type { ChatRequest } from "../schemas/agent.js";
+import type { ChatRequest, ToolPlanStep } from "../schemas/agent.js";
 import type { ToolRegistry } from "../tools/registry.js";
 
 export interface ModelClient {
   complete(request: ChatRequest, registry: ToolRegistry): Promise<string>;
+  planTools?(message: string, registry: ToolRegistry): Promise<ToolPlanStep[]>;
 }
 
 export class MockModelClient implements ModelClient {
@@ -83,6 +84,48 @@ export class OpenAICompatibleChatAdapter implements ModelClient {
     }
     return content;
   }
+
+  async planTools(message: string, registry: ToolRegistry): Promise<ToolPlanStep[]> {
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an AIOps tool planner. Return only strict JSON with shape {\"steps\":[{\"phase\":\"string\",\"tools\":[\"tool_name\"],\"reason\":\"string\"}]}. Use only listed tools. Prefer multi-tool plans when diagnosis requires correlation. Do not include write actions.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              userMessage: message,
+              tools: registry.manifests(),
+              allowedToolNames: registry.names(),
+            }),
+          },
+        ],
+        temperature: 0,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`${this.providerName} planning request failed with status ${response.status}.`);
+    }
+
+    const body = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = body.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error(`${this.providerName} planning response did not include message content.`);
+    }
+    return parseToolPlan(content);
+  }
 }
 
 export class MiniMaxChatCompletionsAdapter extends OpenAICompatibleChatAdapter {
@@ -124,4 +167,22 @@ export function getModelClient(): ModelClient {
   }
 
   return new MockModelClient();
+}
+
+function parseToolPlan(content: string): ToolPlanStep[] {
+  const trimmed = content.trim();
+  const jsonText = trimmed.startsWith("```")
+    ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
+    : trimmed;
+  const parsed = JSON.parse(jsonText) as { steps?: ToolPlanStep[] };
+  if (!Array.isArray(parsed.steps)) {
+    return [];
+  }
+  return parsed.steps
+    .filter((step) => step && typeof step.phase === "string" && Array.isArray(step.tools))
+    .map((step) => ({
+      phase: step.phase,
+      tools: step.tools.filter((tool) => typeof tool === "string"),
+      reason: typeof step.reason === "string" ? step.reason : "模型生成的工具计划。",
+    }));
 }

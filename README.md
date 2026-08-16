@@ -207,13 +207,15 @@ AIOps 关联分析工具：
 
 ## 动态多功能联动分析
 
-Agent 已经实现基于 LangGraph.js 的 `AnalysisPlanner`，不再只是一次性调用单个工具。它会根据用户问题生成多阶段分析链路。
+Agent 已经实现基于 LangGraph.js 的 `AnalysisPlanner`，不再只是一次性调用单个工具。它会先让本地 OpenAI-compatible 大模型基于工具描述生成结构化工具计划，然后由 LangGraph 校验、过滤越权/不存在的工具并执行；如果本地模型不可用或输出无效，会回退到规则计划。
 
 异常分析默认链路：
 
 ```mermaid
 flowchart LR
-  Input["用户：集群异常/告警/错误"] --> Plan["plan_intent"]
+  Input["用户：集群异常/告警/错误"] --> LLMPlan["本地模型生成工具计划"]
+  LLMPlan --> Validate["LangGraph 校验工具名和只读边界"]
+  Validate --> Plan["plan_intent"]
   Plan --> Execute["execute_tools"]
   Execute --> Findings["derive_findings"]
   Findings --> Heal["propose_self_healing"]
@@ -223,7 +225,7 @@ LangGraph 节点职责：
 
 | 节点 | 作用 |
 | --- | --- |
-| `plan_intent` | 识别用户意图，生成多阶段工具计划 |
+| `plan_intent` | 优先让本地大模型基于 Tool Manifest 识别用户意图并生成多阶段工具计划 |
 | `execute_tools` | 按计划执行单工具或多工具协同分析 |
 | `derive_findings` | 从工具证据中推导异常、根因和影响面 |
 | `propose_self_healing` | 生成需要审批的自愈/交付建议 |
@@ -238,6 +240,22 @@ self_healing_proposals    后续自愈/交付建议，必须审批后才能执�
 ```
 
 自愈建议只生成计划，不会直接改生产环境。真正执行仍然要进入 `/api/delivery/changes` 审批和审计流程。
+
+工具计划格式：
+
+```json
+{
+  "steps": [
+    {
+      "phase": "correlate",
+      "tools": ["query_cluster_status", "query_logs"],
+      "reason": "用户描述服务异常，需要关联集群状态和日志。"
+    }
+  ]
+}
+```
+
+本地模型只能选择已注册工具。不存在的工具、写操作或用户无权限工具会被后端过滤，不能直接执行。
 
 内部验证路由是 `/api/tools/{tool_name}`。Backstage 前端正常只调用 `/api/agent/chat`。
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app/createApp.js";
+import { AnalysisPlanner } from "../agent/analysisPlanner.js";
+import { MockAwsProvider } from "../integrations/aws/provider.js";
+import type { ChatRequest, ToolPlanStep } from "../schemas/agent.js";
+import { ToolRegistry } from "../tools/registry.js";
+import type { ModelClient } from "../agent/modelAdapter.js";
 
 process.env.MODEL_PROVIDER = "mock";
 
@@ -75,6 +80,39 @@ describe("agent route", () => {
     expect(body.findings.map((finding: { title: string }) => finding.title)).toContain("形成初步根因假设");
     expect(body.self_healing_proposals[0].requiresApproval).toBe(true);
     expect(body.self_healing_proposals[0].actionType).toBe("scale_service");
+  });
+});
+
+describe("LangGraph model-driven planning", () => {
+  it("uses model-generated plans and filters invalid tools", async () => {
+    class PlanningModel implements ModelClient {
+      async complete(_request: ChatRequest, _registry: ToolRegistry): Promise<string> {
+        return "planned";
+      }
+
+      async planTools(_message: string, _registry: ToolRegistry): Promise<ToolPlanStep[]> {
+        return [
+          {
+            phase: "model-detect",
+            tools: ["query_logs", "delete_cluster", "query_cluster_status"],
+            reason: "模型根据语义判断需要日志和集群状态。",
+          },
+        ];
+      }
+    }
+
+    const registry = new ToolRegistry(new MockAwsProvider());
+    const planner = new AnalysisPlanner(registry, new PlanningModel());
+    const result = await planner.run("为什么服务一直报错，帮我看一下运行状态");
+
+    expect(result.steps).toEqual([
+      {
+        phase: "model-detect",
+        tools: ["query_logs", "query_cluster_status"],
+        reason: "模型根据语义判断需要日志和集群状态。",
+      },
+    ]);
+    expect(result.toolCalls.map((call) => call.name)).toEqual(["query_logs", "query_cluster_status"]);
   });
 });
 

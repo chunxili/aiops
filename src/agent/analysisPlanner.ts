@@ -6,6 +6,7 @@ import type {
 } from "../schemas/agent.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import type { ModelClient } from "./modelAdapter.js";
 
 export type AnalysisPlanResult = {
   steps: AnalysisStep[];
@@ -15,7 +16,10 @@ export type AnalysisPlanResult = {
 };
 
 export class AnalysisPlanner {
-  constructor(private readonly registry: ToolRegistry) {}
+  constructor(
+    private readonly registry: ToolRegistry,
+    private readonly modelClient?: ModelClient,
+  ) {}
 
   async run(message: string): Promise<AnalysisPlanResult> {
     const graph = this.buildGraph();
@@ -44,8 +48,8 @@ export class AnalysisPlanner {
       selfHealingProposals: Annotation<SelfHealingProposal[]>(),
     });
 
-    const planNode = (state: typeof GraphState.State) => ({
-      steps: this.plan(state.message),
+    const planNode = async (state: typeof GraphState.State) => ({
+      steps: await this.plan(state.message),
     });
 
     const executeNode = async (state: typeof GraphState.State) => ({
@@ -94,7 +98,37 @@ export class AnalysisPlanner {
     return toolCalls;
   }
 
-  private plan(message: string): AnalysisStep[] {
+  private async plan(message: string): Promise<AnalysisStep[]> {
+    const modelPlan = await this.modelDrivenPlan(message);
+    if (modelPlan.length > 0) {
+      return modelPlan;
+    }
+    return this.ruleDrivenPlan(message);
+  }
+
+  private async modelDrivenPlan(message: string): Promise<AnalysisStep[]> {
+    if (!this.modelClient?.planTools) {
+      return [];
+    }
+
+    try {
+      const proposed = await this.modelClient.planTools(message, this.registry);
+      const allowed = new Set(this.registry.names());
+      const validSteps = proposed
+        .map((step) => ({
+          phase: step.phase || "model-planned",
+          tools: unique(step.tools).filter((tool) => allowed.has(tool)),
+          reason: step.reason || "本地模型根据工具描述生成的计划。",
+        }))
+        .filter((step) => step.tools.length > 0);
+
+      return validSteps.length > 0 ? validSteps : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private ruleDrivenPlan(message: string): AnalysisStep[] {
     const text = message.toLowerCase();
     const selected = this.registry.selectForMessage(message);
     const steps: AnalysisStep[] = [];

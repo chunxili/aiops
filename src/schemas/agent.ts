@@ -20,6 +20,12 @@ export type AnalysisStep = {
   reason: string;
 };
 
+export type ToolPlanStep = {
+  phase: string;
+  tools: string[];
+  reason: string;
+};
+
 export type AnalysisFinding = {
   severity: "info" | "warning" | "critical";
   title: string;

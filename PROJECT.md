@@ -4,7 +4,7 @@
 
 AIOps agent 是一套面向 Backstage + TypeScript + React AIOps 平台的统一 Agent 服务，核心编排采用 LangGraph.js。
 
-目标是把原 AIOps 平台已有能力，以及后续新增能力，统一接入一个聊天式 Agent 入口：
+目标是把原 AIOps 平台已有能力，以及后续新增能力，统一接入一个聊天式 Agent 入口。Agent 的工具选择优先由本地 OpenAI-compatible 大模型根据 Tool Manifest 进行语义规划，LangGraph 负责校验、流转和执行。
 
 ```text
 POST /api/agent/chat
